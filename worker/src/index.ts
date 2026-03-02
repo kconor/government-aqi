@@ -41,6 +41,42 @@ export default {
   }
 };
 
+// Timezone abbreviation → UTC offset in hours
+const TZ_OFFSETS: Record<string, number> = {
+  EST: -5, CST: -6, MST: -7, PST: -8, AKT: -9, HST: -10,
+  CET: +1, EAT: +3, IST: +5.5, NPT: +5.75, TJT: +5, GST: +4,
+};
+
+/** Parse EPA date/time/tz into UTC epoch seconds. Returns 0 on failure. */
+function toEpochSeconds(validDate: string, validTime: string, timeZone: string): number {
+  // validDate = "MM/DD/YY", validTime = "HH:MM" or empty, timeZone = "EST" etc.
+  const parts = validDate.split('/');
+  if (parts.length !== 3) return 0;
+
+  const month = parseInt(parts[0], 10);
+  const day = parseInt(parts[1], 10);
+  let year = parseInt(parts[2], 10);
+  if (isNaN(month) || isNaN(day) || isNaN(year)) return 0;
+
+  // Two-digit year: 00-99 → 2000-2099
+  if (year < 100) year += 2000;
+
+  let hours = 0, minutes = 0;
+  if (validTime && validTime.trim()) {
+    const tp = validTime.trim().split(':');
+    hours = parseInt(tp[0], 10) || 0;
+    minutes = parseInt(tp[1], 10) || 0;
+  }
+
+  const offsetHours = TZ_OFFSETS[timeZone.trim()] ?? 0;
+
+  // Build a UTC date by subtracting the timezone offset
+  // Date.UTC returns milliseconds, we convert to seconds
+  const utcMs = Date.UTC(year, month - 1, day, hours, minutes, 0, 0);
+  const epochSeconds = Math.floor(utcMs / 1000) - Math.floor(offsetHours * 3600);
+  return epochSeconds;
+}
+
 async function updateAqiData(env: Env) {
   console.log("Starting AQI data update...");
 
@@ -49,80 +85,77 @@ async function updateAqiData(env: Env) {
     if (!response.ok) {
       throw new Error(`Failed to fetch reportingarea.dat: ${response.status} ${response.statusText}`);
     }
-    
+
     const textData = await response.text();
     const lines = textData.split('\n');
-    
+
     // We use a Map to group by city-state name
     const locationsMap = new Map<string, any>();
-    let latestTimestamp = "";
-    
+    let latestTimestamp = 0;
+
     for (const line of lines) {
       if (!line.trim()) continue;
-      
+
       const parts = line.split('|');
       if (parts.length < 16) continue;
-      
+
       const [
         issueDate, validDate, validTime, timeZone,
         recordSequence, dataType, primary,
         reportingArea, stateCode, latStr, lonStr,
         parameterName, aqiValueStr, aqiCategory
       ] = parts;
-      
+
       // We only care about current Observations
       if (dataType !== 'O') continue;
-      
+
       const lat = parseFloat(latStr);
       const lon = parseFloat(lonStr);
       const aqiValue = parseInt(aqiValueStr, 10);
-      
+
       if (isNaN(lat) || isNaN(lon) || isNaN(aqiValue)) continue;
-      
+
       // Use the formatted name as the unique key, saving space by not having a separate ID field
       const name = stateCode.trim() ? `${reportingArea.trim()}, ${stateCode.trim()}` : reportingArea.trim();
-      
-      // Create ISO 8601 timestamp (assuming roughly current year to construct it, though EPA gives "MM/DD/YY")
-      // Example: "03/02/26", "14:00", "EST" -> We'll just pass the raw readable string to keep it simple, 
-      // but include the date so the watch can check if it's "from a previous day"
-      const timestampStr = `${validDate} ${validTime} ${timeZone}`;
-      
+
+      const epochSeconds = toEpochSeconds(validDate, validTime, timeZone);
+
       if (!locationsMap.has(name)) {
         locationsMap.set(name, {
           n: name,
           la: lat,
           lo: lon,
           m: {},
-          t: timestampStr // Store the timestamp for this specific sensor
+          t: epochSeconds
         });
       }
-      
+
       const sensor = locationsMap.get(name)!;
-      
+
       // Update sensor timestamp to the latest observation for this location
-      if (timestampStr > sensor.t) {
-          sensor.t = timestampStr;
+      if (epochSeconds > sensor.t) {
+          sensor.t = epochSeconds;
       }
 
       // Store metric (e.g., OZONE, PM2.5)
       const metricKey = parameterName.trim().toUpperCase();
       sensor.m[metricKey] = aqiValue;
-      
+
       // If this is the "Primary" parameter, set it as the top-level 'A' (AQI)
       // and capture the category string (Good, Moderate, etc.)
       if (primary === 'Y') {
         sensor.A = aqiValue;
         sensor.C = aqiCategory.trim();
       }
-      
+
       // Keep track of the global latest observation time
-      if (timestampStr > latestTimestamp) {
-          latestTimestamp = timestampStr;
+      if (epochSeconds > latestTimestamp) {
+          latestTimestamp = epochSeconds;
       }
     }
-    
+
     const finalData = {
-        t: latestTimestamp, // Global timestamp
+        t: latestTimestamp, // Global timestamp (UTC epoch seconds)
         s: Array.from(locationsMap.values())
     };
     

@@ -5,7 +5,7 @@ import com.google.gson.annotations.SerializedName
 // Models to match the minified Cloudflare Worker JSON output
 
 data class MasterDataPayload(
-    @SerializedName("t") val timestamp: String,
+    @SerializedName("t") val timestamp: Long,
     @SerializedName("s") val sensors: List<SensorData>
 )
 
@@ -15,6 +15,6 @@ data class SensorData(
     @SerializedName("lo") val lon: Double,
     @SerializedName("A") val primaryAqi: Int?, // Make it nullable just in case it's missing
     @SerializedName("C") val category: String?,
-    @SerializedName("t") val timestamp: String, // "MM/DD/YY HH:MM TZ"
+    @SerializedName("t") val timestamp: Long, // UTC epoch seconds
     @SerializedName("m") val metrics: Map<String, Int>
 )

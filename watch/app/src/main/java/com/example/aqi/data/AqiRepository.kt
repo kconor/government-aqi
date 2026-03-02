@@ -3,15 +3,22 @@ package com.example.aqi.data
 import android.content.Context
 import android.util.Log
 import com.example.aqi.location.LocationHelper
+import java.time.Instant
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.util.Locale
+import java.time.ZoneId
 
 class AqiRepository(private val context: Context) {
     private val api = AqiApi.instance
     private val prefs = context.aqiPrefs
     private val locationHelper = LocationHelper(context)
-    private val feedDateFormatter = DateTimeFormatter.ofPattern("MM/dd/yy", Locale.US)
+
+    /** Returns true if the epoch-seconds timestamp falls on today in the device's local timezone. */
+    private fun isFromToday(epochSeconds: Long): Boolean {
+        val sensorDate = Instant.ofEpochSecond(epochSeconds)
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
+        return sensorDate == LocalDate.now()
+    }
 
     /** Returns true if sync completed successfully (data saved or intentionally kept). */
     suspend fun syncData(): Boolean {
@@ -31,7 +38,6 @@ class AqiRepository(private val context: Context) {
                 return false
             }
 
-            val todayDate = LocalDate.now().format(feedDateFormatter)
             val cachedData = prefs.getLatestSensorData()
 
             // Only consider sensors that include a primary AQI reading.
@@ -41,7 +47,7 @@ class AqiRepository(private val context: Context) {
                 return true
             }
 
-            val sensorsWithTodayAqi = sensorsWithAqi.filter { extractDate(it.timestamp) == todayDate }
+            val sensorsWithTodayAqi = sensorsWithAqi.filter { isFromToday(it.timestamp) }
 
             val sensorToSave = if (sensorsWithTodayAqi.isNotEmpty()) {
                 locationHelper.findNearestSensorFromData(location, sensorsWithTodayAqi)
@@ -49,7 +55,7 @@ class AqiRepository(private val context: Context) {
                 val cacheIsToday =
                     cachedData != null &&
                     cachedData.primaryAqi != null &&
-                    extractDate(cachedData.timestamp) == todayDate
+                    isFromToday(cachedData.timestamp)
 
                 if (cacheIsToday) {
                     Log.d("AqiRepository", "No nearby AQI sensor with today's date in payload. Keeping cached same-day data.")
@@ -58,7 +64,7 @@ class AqiRepository(private val context: Context) {
 
                 Log.w(
                     "AqiRepository",
-                    "No AQI sensors with today's date ($todayDate). Falling back to nearest sensor with AQI regardless of date."
+                    "No AQI sensors with today's date. Falling back to nearest sensor with AQI regardless of date."
                 )
                 locationHelper.findNearestSensorFromData(location, sensorsWithAqi)
             }
@@ -71,8 +77,7 @@ class AqiRepository(private val context: Context) {
             // Sticky sensor: prefer stale cached data from the same sensor over
             // switching to a different nearby sensor, as long as the cache is from today.
             if (cachedData != null && sensorToSave.name != cachedData.name) {
-                val cachedDate = extractDate(cachedData.timestamp)
-                if (cachedDate == todayDate && cachedData.primaryAqi != null) {
+                if (isFromToday(cachedData.timestamp) && cachedData.primaryAqi != null) {
                     Log.d(
                         "AqiRepository",
                         "Nearest sensor changed from ${cachedData.name} to ${sensorToSave.name}. " +
@@ -82,11 +87,10 @@ class AqiRepository(private val context: Context) {
                 }
             }
 
-            val selectedDate = extractDate(sensorToSave.timestamp)
-            if (selectedDate != todayDate) {
+            if (!isFromToday(sensorToSave.timestamp)) {
                 Log.w(
                     "AqiRepository",
-                    "Selected fallback sensor ${sensorToSave.name} from $selectedDate (today is $todayDate)."
+                    "Selected fallback sensor ${sensorToSave.name} is not from today."
                 )
             }
 
@@ -99,6 +103,4 @@ class AqiRepository(private val context: Context) {
             return false
         }
     }
-
-    private fun extractDate(timestamp: String): String = timestamp.substringBefore(" ").trim()
 }

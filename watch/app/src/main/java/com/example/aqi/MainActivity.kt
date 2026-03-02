@@ -21,6 +21,24 @@ import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material.*
 import com.example.aqi.data.AqiViewModel
 import com.example.aqi.data.SensorData
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
+/** Format UTC epoch seconds as a local time string, e.g. "2:00 PM" or "Yesterday 2:00 PM". */
+private fun formatTimestamp(epochSeconds: Long): String {
+    val zone = ZoneId.systemDefault()
+    val zonedTime = Instant.ofEpochSecond(epochSeconds).atZone(zone)
+    val timeStr = zonedTime.format(DateTimeFormatter.ofPattern("h:mm a"))
+    val sensorDate = zonedTime.toLocalDate()
+    val today = LocalDate.now(zone)
+    return when {
+        sensorDate == today -> timeStr
+        sensorDate == today.minusDays(1) -> "Yesterday $timeStr"
+        else -> "${zonedTime.format(DateTimeFormatter.ofPattern("M/d"))} $timeStr"
+    }
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -138,7 +156,7 @@ fun DetailsPage(
         if (data != null) {
             item {
                 Text(data.name, style = MaterialTheme.typography.body2, color = MaterialTheme.colors.secondary)
-                Text("Updated: ${data.timestamp}", style = MaterialTheme.typography.caption3)
+                Text("Updated: ${formatTimestamp(data.timestamp)}", style = MaterialTheme.typography.caption3)
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
