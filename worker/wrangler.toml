@@ -1,0 +1,11 @@
+name = "aqi-worker"
+main = "src/index.ts"
+compatibility_date = "2024-03-02"
+
+[triggers]
+crons = ["30 * * * *"] # Run at 30 minutes past the hour
+
+[[r2_buckets]]
+binding = "AQI_BUCKET"
+bucket_name = "epa-aqi-data"
+preview_bucket_name = "epa-aqi-data-preview"
