@@ -17,6 +17,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            // 10.0.2.2 is the Android emulator's alias for the host machine's localhost
+            buildConfigField("String", "AQI_BASE_URL", "\"http://10.0.2.2:8787/\"")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

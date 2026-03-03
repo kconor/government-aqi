@@ -11,8 +11,17 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.tasks.await
+import android.os.Build
 import android.os.SystemClock
+import android.util.Log
 import kotlin.math.*
+
+private val IS_EMULATOR = Build.FINGERPRINT.contains("generic") ||
+    Build.FINGERPRINT.contains("emulator") ||
+    Build.MODEL.contains("Emulator") ||
+    Build.MODEL.contains("Android SDK") ||
+    Build.DEVICE.contains("emu") ||
+    Build.PRODUCT.startsWith("sdk")
 
 class LocationHelper(private val context: Context) {
     private val fusedLocationClient: FusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(context)
@@ -22,15 +31,21 @@ class LocationHelper(private val context: Context) {
             return null
         }
 
+        if (IS_EMULATOR) {
+            Log.d("LocationHelper", "Emulator detected, using Seattle as default location")
+            return Location("emulator").apply {
+                latitude = 47.6062
+                longitude = -122.3321
+            }
+        }
+
         try {
             // 1. Try the free, cached location first
             val lastLocation = fusedLocationClient.lastLocation.await()
             if (lastLocation != null) {
-                // Location.time is UTC time in milliseconds. Alternatively, elapsedRealtimeNanos is safer for relative time since boot.
-                // We'll use elapsedRealtimeNanos to calculate exactly how old it is without clock skew issues.
                 val ageNanos = SystemClock.elapsedRealtimeNanos() - lastLocation.elapsedRealtimeNanos
                 val ageMinutes = ageNanos / 1_000_000_000L / 60L
-                
+
                 if (ageMinutes <= cacheMaxAgeMinutes) {
                     return lastLocation
                 }
@@ -49,8 +64,9 @@ class LocationHelper(private val context: Context) {
 
         } catch (e: Exception) {
             e.printStackTrace()
-            return null
         }
+
+        return null
     }
 
     fun findNearestSensorFromData(currentLocation: Location, sensors: List<SensorData>): SensorData? {
