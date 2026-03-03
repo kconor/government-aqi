@@ -11,19 +11,24 @@ import kotlinx.coroutines.flow.first
 class AqiComplicationService : SuspendingComplicationDataSourceService() {
 
     override fun getPreviewData(type: ComplicationType): ComplicationData? {
-        return createComplicationData(45, "AQI", type)
+        return createComplicationData(45, "PM2.5", type)
     }
 
     override suspend fun onComplicationRequest(request: ComplicationRequest): ComplicationData? {
         val prefs = applicationContext.aqiPrefs
         val data = prefs.latestSensorDataFlow.first()
-        
-        if (data == null || data.primaryAqi == null) {
+
+        if (data == null || data.metrics.isEmpty()) {
             return createNoDataComplication(request.complicationType)
         }
 
-        // Always display the primary winning AQI
-        return createComplicationData(data.primaryAqi, "AQI", request.complicationType)
+        // Find the pollutant with the highest AQI value
+        val worst = data.metrics.maxByOrNull { it.value }
+        if (worst == null) {
+            return createNoDataComplication(request.complicationType)
+        }
+
+        return createComplicationData(worst.value, worst.key, request.complicationType)
     }
     
     private fun createNoDataComplication(type: ComplicationType): ComplicationData? {

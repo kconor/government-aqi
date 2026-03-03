@@ -24,6 +24,7 @@ android {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -45,6 +46,7 @@ dependencies {
     implementation("androidx.wear.compose:compose-foundation:1.5.6")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.fragment:fragment-ktx:1.6.2")
 
     // WorkManager and Coroutines for background tasks
     implementation("androidx.work:work-runtime-ktx:2.9.0")

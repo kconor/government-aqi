@@ -7,11 +7,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -25,6 +27,16 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+
+/** Map an AQI value to the triangle drawable resource (0-5 = Good to Hazardous). */
+private fun aqiTriangleRes(aqi: Int): Int = when {
+    aqi <= 50 -> R.drawable.aqi_triangle_0
+    aqi <= 100 -> R.drawable.aqi_triangle_1
+    aqi <= 150 -> R.drawable.aqi_triangle_2
+    aqi <= 200 -> R.drawable.aqi_triangle_3
+    aqi <= 300 -> R.drawable.aqi_triangle_4
+    else -> R.drawable.aqi_triangle_5
+}
 
 /** Format UTC epoch seconds as a local time string, e.g. "2:00 PM" or "Yesterday 2:00 PM". */
 private fun formatTimestamp(epochSeconds: Long): String {
@@ -67,7 +79,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class Page { STATUS, DETAILS, SETTINGS, ABOUT }
+enum class Page { DETAILS, SETTINGS, ABOUT }
 
 @Composable
 fun AqiApp(viewModel: AqiViewModel) {
@@ -91,7 +103,6 @@ fun AqiApp(viewModel: AqiViewModel) {
     ) {
         HorizontalPager(state = pagerState) { pageIndex ->
             when (pages[pageIndex]) {
-                Page.STATUS -> StatusPage(data = latestData)
                 Page.DETAILS -> DetailsPage(
                     data = latestData,
                     onRefresh = { viewModel.forceRefresh() }
@@ -107,39 +118,6 @@ fun AqiApp(viewModel: AqiViewModel) {
 }
 
 @Composable
-fun StatusPage(data: SensorData?) {
-    val context = LocalContext.current
-    val hasLocationPermission = remember {
-        ContextCompat.checkSelfPermission(
-            context, Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-    }
-
-    ScalingLazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        if (data == null) {
-            item {
-                if (!hasLocationPermission) {
-                    Text("Location permission required", style = MaterialTheme.typography.body1, textAlign = TextAlign.Center)
-                } else {
-                    Text("Fetching data...", style = MaterialTheme.typography.body1)
-                }
-            }
-        } else {
-            item {
-                Text("AQI", style = MaterialTheme.typography.title1)
-                Text("${data.primaryAqi ?: "--"}", style = MaterialTheme.typography.display1, color = MaterialTheme.colors.primary)
-                Text(data.category ?: "Unknown", style = MaterialTheme.typography.body1)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(data.name, style = MaterialTheme.typography.caption2)
-            }
-        }
-    }
-}
-
-@Composable
 fun DetailsPage(
     data: SensorData?,
     onRefresh: () -> Unit
@@ -149,27 +127,39 @@ fun DetailsPage(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         item {
-            Text("Details", style = MaterialTheme.typography.title2)
-            Spacer(modifier = Modifier.height(8.dp))
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("AQI Details", style = MaterialTheme.typography.title2)
+                Spacer(modifier = Modifier.height(8.dp))
+            }
         }
 
         if (data != null) {
             item {
-                Text(data.name, style = MaterialTheme.typography.body2, color = MaterialTheme.colors.secondary)
-                Text("Updated: ${formatTimestamp(data.timestamp)}", style = MaterialTheme.typography.caption3)
-                Spacer(modifier = Modifier.height(12.dp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(data.name, style = MaterialTheme.typography.body2, color = MaterialTheme.colors.secondary, textAlign = TextAlign.Center)
+                    Text("Updated: ${formatTimestamp(data.timestamp)}", style = MaterialTheme.typography.caption3)
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
             }
 
             data.metrics.forEach { (metricName, value) ->
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(metricName, style = MaterialTheme.typography.body1)
-                        Text(value.toString(), style = MaterialTheme.typography.body1, color = MaterialTheme.colors.primary)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(value.toString(), style = MaterialTheme.typography.body1, color = MaterialTheme.colors.primary)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Image(
+                                painter = painterResource(aqiTriangleRes(value)),
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
                 }
             }
         } else {
@@ -179,9 +169,13 @@ fun DetailsPage(
         }
 
         item {
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = onRefresh) {
-                Text("Force Sync")
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Chip(
+                    onClick = onRefresh,
+                    label = { Text("Refresh", textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
+                    modifier = Modifier.wrapContentWidth()
+                )
             }
         }
     }
@@ -194,13 +188,15 @@ fun AboutPage() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         item {
-            Text("About", style = MaterialTheme.typography.title2)
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "EPA AQI Watch Face Complication.\nData sourced from AirNow.",
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.caption1
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("About", style = MaterialTheme.typography.title2)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "EPA AQI Watch Face Complication.\nData sourced from AirNow.",
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.caption1
+                )
+            }
         }
     }
 }
@@ -217,9 +213,11 @@ fun SettingsPage(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         item {
-            Text("Location Cache", style = MaterialTheme.typography.title3)
-            Text("Max Age", style = MaterialTheme.typography.caption2)
-            Spacer(modifier = Modifier.height(8.dp))
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Location Cache", style = MaterialTheme.typography.title3)
+                Text("Max Age", style = MaterialTheme.typography.caption2)
+                Spacer(modifier = Modifier.height(8.dp))
+            }
         }
 
         options.forEach { mins ->
@@ -239,7 +237,6 @@ fun SettingsPage(
                         )
                     }
                 )
-                Spacer(modifier = Modifier.height(4.dp))
             }
         }
     }
