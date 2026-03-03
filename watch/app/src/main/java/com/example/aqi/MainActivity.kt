@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -124,10 +125,13 @@ fun DetailsPage(
 ) {
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
+        autoCentering = null,
+        anchorType = ScalingLazyListAnchorType.ItemStart
     ) {
         item {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Spacer(modifier = Modifier.height(24.dp))
                 Text("AQI Details", style = MaterialTheme.typography.title2)
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -137,7 +141,7 @@ fun DetailsPage(
             item {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(data.name, style = MaterialTheme.typography.body2, color = MaterialTheme.colors.secondary, textAlign = TextAlign.Center)
-                    Text("Updated: ${formatTimestamp(data.timestamp)}", style = MaterialTheme.typography.caption3)
+                    Text("Latest data: ${formatTimestamp(data.timestamp)}", style = MaterialTheme.typography.caption3)
                     Spacer(modifier = Modifier.height(12.dp))
                 }
             }
@@ -192,7 +196,7 @@ fun AboutPage() {
                 Text("About", style = MaterialTheme.typography.title2)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "EPA AQI Watch Face Complication.\nData sourced from AirNow.",
+                    text = "Gov AQI displays air quality data from the EPA's AirNow.gov. Data coverage is ~80% of the US and select international cities.",
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.caption1
                 )

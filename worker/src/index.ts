@@ -1,38 +1,70 @@
 export interface Env {
   AQI_BUCKET: R2Bucket;
+  API_SECRET: string;
+}
+
+async function hmacHex(secret: string, message: string): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function verifyAuth(request: Request, secret: string): Promise<boolean> {
+  const token = request.headers.get('X-Auth');
+  if (!token) return false;
+  const nowMinute = Math.floor(Date.now() / 60000);
+  for (const m of [nowMinute, nowMinute - 1, nowMinute + 1]) {
+    if (token === await hmacHex(secret, m.toString())) return true;
+  }
+  return false;
 }
 
 export default {
-  // Handle HTTP requests (serving the JSON files from R2)
+  // Handle HTTP requests — serve from edge cache, only hit R2 on cache miss
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    const path = url.pathname;
-
-    const headers = new Headers();
-    headers.set('Access-Control-Allow-Origin', '*');
-    headers.set('Content-Type', 'application/json');
-
-    try {
-      if (path === '/api/aqi') {
-        const object = await env.AQI_BUCKET.get('all_data.json');
-        if (!object) {
-          return new Response(JSON.stringify({ error: 'Data not found' }), { status: 404, headers });
-        }
-        
-        // Cloudflare R2 automatically handles conditional requests and ETag headers
-        // Just return the object body directly
-        return new Response(object.body, { 
-            headers: {
-                ...Object.fromEntries(headers),
-                'Cache-Control': 'public, max-age=1800' // Hint to clients they can cache this for 30 mins
-            } 
-        });
-      }
-
-      return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers });
-    } catch (e: any) {
-      return new Response(JSON.stringify({ error: 'Internal server error', details: e.message }), { status: 500, headers });
+    if (url.pathname !== '/api/aqi') {
+      return new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
+
+    if (!await verifyAuth(request, env.API_SECRET)) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    const cacheKey = new Request(url.toString(), { method: 'GET' });
+    const cache = caches.default;
+
+    let response = await cache.match(cacheKey);
+    if (response) return response;
+
+    // Cache miss — read from R2
+    const object = await env.AQI_BUCKET.get('all_data.json');
+    if (!object) {
+      return new Response(JSON.stringify({ error: 'Data not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    response = new Response(object.body, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'public, max-age=900' // 15 min, matches cron interval
+      }
+    });
+
+    ctx.waitUntil(cache.put(cacheKey, response.clone()));
+    return response;
   },
 
   // Handle Scheduled Events (fetching from EPA and storing in R2)

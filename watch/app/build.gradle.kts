@@ -1,7 +1,12 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+val localProps = Properties()
+rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { localProps.load(it) }
 
 android {
     namespace = "com.example.aqi"
@@ -13,7 +18,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
-        buildConfigField("String", "AQI_BASE_URL", "\"https://aqi-worker.kconor.workers.dev/\"")
+        buildConfigField("String", "AQI_BASE_URL", "\"https://aqi-worker.kevin-61f.workers.dev/\"")
+        buildConfigField("String", "API_SECRET", "\"${localProps.getProperty("api.secret") ?: ""}\"")
     }
 
     buildTypes {
