@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
 import androidx.core.content.ContextCompat
+import com.example.aqi.AppLog
 import com.example.aqi.data.SensorData
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
@@ -13,7 +14,6 @@ import com.google.android.gms.tasks.CancellationTokenSource
 import kotlinx.coroutines.tasks.await
 import android.os.Build
 import android.os.SystemClock
-import android.util.Log
 import kotlin.math.*
 
 private val IS_EMULATOR = Build.FINGERPRINT.contains("generic") ||
@@ -32,7 +32,7 @@ class LocationHelper(private val context: Context) {
         }
 
         if (IS_EMULATOR) {
-            Log.d("LocationHelper", "Emulator detected, using Seattle as default location")
+            AppLog.d("LocationHelper", "Emulator detected, using Seattle as default location")
             return Location("emulator").apply {
                 latitude = 47.6062
                 longitude = -122.3321
@@ -63,7 +63,7 @@ class LocationHelper(private val context: Context) {
             }
 
         } catch (e: Exception) {
-            e.printStackTrace()
+            AppLog.e("LocationHelper", "Failed to get optimized location.", e)
         }
 
         return null

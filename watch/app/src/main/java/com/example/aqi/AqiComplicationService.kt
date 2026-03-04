@@ -6,6 +6,7 @@ import androidx.wear.watchface.complications.data.*
 import androidx.wear.watchface.complications.datasource.ComplicationRequest
 import androidx.wear.watchface.complications.datasource.SuspendingComplicationDataSourceService
 import com.example.aqi.data.aqiPrefs
+import com.example.aqi.worker.SyncWorkScheduler
 import kotlinx.coroutines.flow.first
 
 class AqiComplicationService : SuspendingComplicationDataSourceService() {
@@ -14,9 +15,25 @@ class AqiComplicationService : SuspendingComplicationDataSourceService() {
         return createComplicationData(45, "PM2.5", type)
     }
 
+    override fun onComplicationActivated(complicationInstanceId: Int, type: ComplicationType) {
+        super.onComplicationActivated(complicationInstanceId, type)
+        SyncWorkScheduler.enqueueImmediateSync(
+            this,
+            "complication_activated:$complicationInstanceId:$type"
+        )
+        AppLog.d(
+            "AqiComplicationService",
+            "Complication activated. id=$complicationInstanceId type=$type"
+        )
+    }
+
     override suspend fun onComplicationRequest(request: ComplicationRequest): ComplicationData? {
         val prefs = applicationContext.aqiPrefs
         val data = prefs.latestSensorDataFlow.first()
+        AppLog.d(
+            "AqiComplicationService",
+            "onComplicationRequest id=${request.complicationInstanceId} type=${request.complicationType} hasData=${data != null}"
+        )
 
         if (data == null || data.metrics.isEmpty()) {
             return createNoDataComplication(request.complicationType)
@@ -30,7 +47,7 @@ class AqiComplicationService : SuspendingComplicationDataSourceService() {
 
         return createComplicationData(worst.value, worst.key, request.complicationType)
     }
-    
+
     private fun createNoDataComplication(type: ComplicationType): ComplicationData? {
         val tapIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK

@@ -2,11 +2,11 @@ package com.example.aqi.data
 
 import android.app.Application
 import android.content.ComponentName
-import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
 import com.example.aqi.AqiComplicationService
+import com.example.aqi.AppLog
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -28,14 +28,14 @@ class AqiViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         viewModelScope.launch {
-            Log.d("AqiViewModel", "Running initial sync")
+            AppLog.d("AqiViewModel", "Running initial sync")
             if (repo.syncData()) complicationUpdater.requestUpdateAll()
         }
     }
 
     fun forceRefresh() {
         viewModelScope.launch {
-            Log.d("AqiViewModel", "Running forceRefresh")
+            AppLog.d("AqiViewModel", "Running forceRefresh")
             if (repo.syncData()) complicationUpdater.requestUpdateAll()
         }
     }

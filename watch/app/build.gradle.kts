@@ -7,6 +7,8 @@ plugins {
 
 val localProps = Properties()
 rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { localProps.load(it) }
+val prodAqiBaseUrl = "https://aqi-worker.kevin-61f.workers.dev/"
+val debugAqiBaseUrl = localProps.getProperty("aqi.base.url.debug") ?: prodAqiBaseUrl
 
 android {
     namespace = "com.example.aqi"
@@ -18,14 +20,14 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
-        buildConfigField("String", "AQI_BASE_URL", "\"https://aqi-worker.kevin-61f.workers.dev/\"")
+        buildConfigField("String", "AQI_BASE_URL", "\"$prodAqiBaseUrl\"")
         buildConfigField("String", "API_SECRET", "\"${localProps.getProperty("api.secret") ?: ""}\"")
     }
 
     buildTypes {
         debug {
-            // 10.0.2.2 is the Android emulator's alias for the host machine's localhost
-            buildConfigField("String", "AQI_BASE_URL", "\"http://10.0.2.2:8787/\"")
+            // On physical watches, 10.0.2.2 is unreachable; default debug to production unless overridden.
+            buildConfigField("String", "AQI_BASE_URL", "\"$debugAqiBaseUrl\"")
         }
         release {
             isMinifyEnabled = false

@@ -1,7 +1,7 @@
 package com.example.aqi.data
 
 import android.content.Context
-import android.util.Log
+import com.example.aqi.AppLog
 import com.example.aqi.location.LocationHelper
 import java.time.Instant
 import java.time.LocalDate
@@ -23,18 +23,18 @@ class AqiRepository(private val context: Context) {
     /** Returns true if sync completed successfully (data saved or intentionally kept). */
     suspend fun syncData(): Boolean {
         try {
-            Log.d("AqiRepository", "Fetching master data from network...")
+            AppLog.d("AqiRepository", "Fetching master data from network...")
             val masterData = api.getAllData()
 
             val cacheMinutes = prefs.getLocationCacheMinutes()
             val location = locationHelper.getOptimizedLocation(cacheMinutes)
             if (location == null) {
-                Log.e("AqiRepository", "Could not get current location.")
+                AppLog.e("AqiRepository", "Could not get current location.")
                 return false
             }
 
             if (masterData.sensors.isEmpty()) {
-                Log.e("AqiRepository", "No sensors in payload.")
+                AppLog.e("AqiRepository", "No sensors in payload.")
                 return false
             }
 
@@ -43,7 +43,7 @@ class AqiRepository(private val context: Context) {
             // Only consider sensors that include a primary AQI reading.
             val sensorsWithAqi = masterData.sensors.filter { it.primaryAqi != null }
             if (sensorsWithAqi.isEmpty()) {
-                Log.w("AqiRepository", "No sensors with a primary AQI in payload. Keeping cached data.")
+                AppLog.w("AqiRepository", "No sensors with a primary AQI in payload. Keeping cached data.")
                 return true
             }
 
@@ -58,11 +58,11 @@ class AqiRepository(private val context: Context) {
                     isFromToday(cachedData.timestamp)
 
                 if (cacheIsToday) {
-                    Log.d("AqiRepository", "No nearby AQI sensor with today's date in payload. Keeping cached same-day data.")
+                    AppLog.d("AqiRepository", "No nearby AQI sensor with today's date in payload. Keeping cached same-day data.")
                     return true
                 }
 
-                Log.w(
+                AppLog.w(
                     "AqiRepository",
                     "No AQI sensors with today's date. Falling back to nearest sensor with AQI regardless of date."
                 )
@@ -70,7 +70,7 @@ class AqiRepository(private val context: Context) {
             }
 
             if (sensorToSave == null) {
-                Log.e("AqiRepository", "Could not select a sensor to save.")
+                AppLog.e("AqiRepository", "Could not select a sensor to save.")
                 return false
             }
 
@@ -78,7 +78,7 @@ class AqiRepository(private val context: Context) {
             // switching to a different nearby sensor, as long as the cache is from today.
             if (cachedData != null && sensorToSave.name != cachedData.name) {
                 if (isFromToday(cachedData.timestamp) && cachedData.primaryAqi != null) {
-                    Log.d(
+                    AppLog.d(
                         "AqiRepository",
                         "Nearest sensor changed from ${cachedData.name} to ${sensorToSave.name}. " +
                             "Keeping cached ${cachedData.name} (still today's data)."
@@ -88,18 +88,18 @@ class AqiRepository(private val context: Context) {
             }
 
             if (!isFromToday(sensorToSave.timestamp)) {
-                Log.w(
+                AppLog.w(
                     "AqiRepository",
                     "Selected fallback sensor ${sensorToSave.name} is not from today."
                 )
             }
 
-            Log.d("AqiRepository", "Selected sensor: ${sensorToSave.name} with AQI: ${sensorToSave.primaryAqi}")
+            AppLog.d("AqiRepository", "Selected sensor: ${sensorToSave.name} with AQI: ${sensorToSave.primaryAqi}")
             prefs.saveLatestSensorData(sensorToSave)
             return true
 
         } catch (e: Exception) {
-            Log.e("AqiRepository", "Error syncing data", e)
+            AppLog.e("AqiRepository", "Error syncing data", e)
             return false
         }
     }
