@@ -3,6 +3,7 @@ package com.example.aqi.data
 import android.content.Context
 import com.example.aqi.AppLog
 import com.example.aqi.location.LocationHelper
+import com.example.aqi.location.LocationHelper.Companion.distanceKm
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -11,6 +12,11 @@ class AqiRepository(private val context: Context) {
     private val api = AqiApi.instance
     private val prefs = context.aqiPrefs
     private val locationHelper = LocationHelper(context)
+
+    companion object {
+        /** If the device is within this distance of the cached sensor, skip nearest-sensor recomputation. */
+        private const val SENSOR_REUSE_THRESHOLD_KM = 8.0 // ~5 miles
+    }
 
     /** Returns true if the epoch-seconds timestamp falls on today in the device's local timezone. */
     private fun isFromToday(epochSeconds: Long): Boolean {
@@ -53,6 +59,20 @@ class AqiRepository(private val context: Context) {
             if (sensorsWithAqi.isEmpty()) {
                 AppLog.w("AqiRepository", "No sensors with a primary AQI in payload. Keeping cached data.")
                 return true
+            }
+
+            // If we haven't moved far, reuse the same sensor by name instead of recomputing nearest.
+            if (cachedData != null) {
+                val distKm = distanceKm(location.latitude, location.longitude, cachedData.lat, cachedData.lon)
+                if (distKm < SENSOR_REUSE_THRESHOLD_KM) {
+                    val updated = sensorsWithAqi.find { it.name == cachedData.name }
+                    if (updated != null && isFromToday(updated.timestamp)) {
+                        AppLog.d("AqiRepository",
+                            "Within ${distKm.toInt()}km of ${cachedData.name}, reusing same sensor")
+                        prefs.saveLatestSensorData(updated)
+                        return true
+                    }
+                }
             }
 
             val sensorsWithTodayAqi = sensorsWithAqi.filter { isFromToday(it.timestamp) }
@@ -164,21 +184,6 @@ class AqiRepository(private val context: Context) {
     private fun findNearestForecastLocation(
         lat: Double, lon: Double, locations: List<ForecastLocation>
     ): ForecastLocation? {
-        if (locations.isEmpty()) return null
-        var nearest: ForecastLocation? = null
-        var minDist = Double.MAX_VALUE
-        for (loc in locations) {
-            val dLat = Math.toRadians(loc.lat - lat)
-            val dLon = Math.toRadians(loc.lon - lon)
-            val a = kotlin.math.sin(dLat / 2).let { it * it } +
-                kotlin.math.cos(Math.toRadians(lat)) * kotlin.math.cos(Math.toRadians(loc.lat)) *
-                kotlin.math.sin(dLon / 2).let { it * it }
-            val dist = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
-            if (dist < minDist) {
-                minDist = dist
-                nearest = loc
-            }
-        }
-        return nearest
+        return locations.minByOrNull { distanceKm(lat, lon, it.lat, it.lon) }
     }
 }
