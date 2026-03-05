@@ -30,7 +30,8 @@ android {
             buildConfigField("String", "AQI_BASE_URL", "\"$debugAqiBaseUrl\"")
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug")
         }
