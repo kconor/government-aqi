@@ -6,6 +6,7 @@ import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUp
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.aqi.AqiComplicationService
+import android.util.Log
 import com.example.aqi.AppLog
 import com.example.aqi.data.AqiRepository
 import com.example.aqi.data.aqiPrefs
@@ -26,7 +27,7 @@ class SyncWorker(
         val startMs = System.currentTimeMillis()
         val success = repo.syncData()
         val elapsedMs = System.currentTimeMillis() - startMs
-        AppLog.d("SyncWorker", "syncData() returned $success in ${elapsedMs}ms. reason=$triggerReason")
+        Log.d("SyncWorker", "syncData()=$success in ${elapsedMs}ms reason=$triggerReason")
 
         if (!success) {
             AppLog.w("SyncWorker", "Sync failed. Scheduling retry.")
@@ -44,7 +45,7 @@ class SyncWorker(
             val componentName = ComponentName(context, AqiComplicationService::class.java)
             val updateRequester = ComplicationDataSourceUpdateRequester.create(context, componentName)
             updateRequester.requestUpdateAll()
-            AppLog.d("SyncWorker", "Sync succeeded and requested complication update.")
+            Log.d("SyncWorker", "requestUpdateAll() called")
         }
 
         return Result.success()
