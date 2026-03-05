@@ -1,9 +1,10 @@
-# Keep all app classes — let R8 only shrink unused library code and resources.
+# Disable aggressive optimizations (inlining, class merging, etc.)
+# that break reflection-heavy libraries like WorkManager, Retrofit, Gson.
+-dontoptimize
+
+# Keep all app code — only shrink unused library classes and resources.
 -keep class com.example.aqi.** { *; }
 
-# WorkManager uses Room internally; keep the generated database impl.
--keep class androidx.work.impl.** { *; }
-
-# Gson TypeToken requires generic signatures to be preserved
+# Gson TypeToken requires generic signatures
 -keep class com.google.gson.reflect.TypeToken { *; }
 -keep class * extends com.google.gson.reflect.TypeToken
