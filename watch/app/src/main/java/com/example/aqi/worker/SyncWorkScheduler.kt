@@ -24,7 +24,11 @@ object SyncWorkScheduler {
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
-    fun enqueueImmediateSync(context: Context, triggerReason: String) {
+    fun enqueueImmediateSync(
+        context: Context,
+        triggerReason: String,
+        workPolicy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP
+    ) {
         val inputData = Data.Builder()
             .putString(INPUT_KEY_TRIGGER_REASON, triggerReason)
             .build()
@@ -36,10 +40,13 @@ object SyncWorkScheduler {
 
         WorkManager.getInstance(context).enqueueUniqueWork(
             IMMEDIATE_SYNC_WORK_NAME,
-            ExistingWorkPolicy.REPLACE,
+            workPolicy,
             syncRequest
         )
-        AppLog.d("SyncWorkScheduler", "Immediate sync enqueued. reason=$triggerReason")
+        AppLog.d(
+            "SyncWorkScheduler",
+            "Immediate sync enqueued. reason=$triggerReason policy=$workPolicy"
+        )
     }
 
     suspend fun enqueueIfStale(context: Context, triggerReason: String) {
@@ -83,9 +90,12 @@ object SyncWorkScheduler {
 
         WorkManager.getInstance(context).enqueueUniqueWork(
             IMMEDIATE_SYNC_WORK_NAME,
-            ExistingWorkPolicy.REPLACE,
+            ExistingWorkPolicy.KEEP,
             syncRequest
         )
-        AppLog.d("SyncWorkScheduler", "Expedited sync enqueued. reason=$triggerReason")
+        AppLog.d(
+            "SyncWorkScheduler",
+            "Expedited sync enqueued. reason=$triggerReason policy=${ExistingWorkPolicy.KEEP}"
+        )
     }
 }

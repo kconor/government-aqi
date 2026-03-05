@@ -27,15 +27,22 @@ class AqiApplication : Application() {
         // Schedule hourly alarm for reliable background sync
         SyncAlarmScheduler.scheduleAlarm(this)
 
-        // Immediate sync on app start
-        SyncWorkScheduler.enqueueImmediateSync(this, "app_start")
+        // App start is non-user initiated, so only enqueue when data is stale.
+        CoroutineScope(Dispatchers.IO).launch {
+            SyncWorkScheduler.enqueueIfStale(this@AqiApplication, "app_start")
+        }
 
         // Sync on wake from Doze — ACTION_SCREEN_ON must be runtime-registered
         registerReceiver(
             object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
+                    val pendingResult = goAsync()
                     CoroutineScope(Dispatchers.IO).launch {
-                        SyncWorkScheduler.enqueueIfStale(context, "screen_on")
+                        try {
+                            SyncWorkScheduler.enqueueIfStale(context, "screen_on")
+                        } finally {
+                            pendingResult.finish()
+                        }
                     }
                 }
             },

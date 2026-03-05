@@ -7,7 +7,10 @@ import androidx.wear.watchface.complications.datasource.ComplicationRequest
 import androidx.wear.watchface.complications.datasource.SuspendingComplicationDataSourceService
 import com.example.aqi.data.aqiPrefs
 import com.example.aqi.worker.SyncWorkScheduler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class AqiComplicationService : SuspendingComplicationDataSourceService() {
 
@@ -17,10 +20,12 @@ class AqiComplicationService : SuspendingComplicationDataSourceService() {
 
     override fun onComplicationActivated(complicationInstanceId: Int, type: ComplicationType) {
         super.onComplicationActivated(complicationInstanceId, type)
-        SyncWorkScheduler.enqueueImmediateSync(
-            this,
-            "complication_activated:$complicationInstanceId:$type"
-        )
+        CoroutineScope(Dispatchers.IO).launch {
+            SyncWorkScheduler.enqueueIfStale(
+                applicationContext,
+                "complication_activated:$complicationInstanceId:$type"
+            )
+        }
         AppLog.d(
             "AqiComplicationService",
             "Complication activated. id=$complicationInstanceId type=$type"
