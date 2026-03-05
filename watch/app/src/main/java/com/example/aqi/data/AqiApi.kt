@@ -13,6 +13,9 @@ interface AqiApi {
     @GET("api/aqi")
     suspend fun getAllData(): MasterDataPayload
 
+    @GET("api/forecast")
+    suspend fun getForecastData(): ForecastPayload
+
     companion object {
         private fun hmacHex(secret: String, message: String): String {
             val mac = Mac.getInstance("HmacSHA256")

@@ -25,6 +25,7 @@ class AqiRepository(private val context: Context) {
         try {
             AppLog.d("AqiRepository", "Fetching master data from network...")
             val masterData = api.getAllData()
+            AppLog.d("AqiRepository", "Received ${masterData.sensors.size} sensors from API")
 
             val cacheMinutes = prefs.getLocationCacheMinutes()
             val location = locationHelper.getOptimizedLocation(cacheMinutes)
@@ -39,6 +40,12 @@ class AqiRepository(private val context: Context) {
             }
 
             val cachedData = prefs.getLatestSensorData()
+            if (cachedData != null) {
+                val cacheAgeMin = (System.currentTimeMillis() - cachedData.timestamp * 1000) / 60_000
+                AppLog.d("AqiRepository", "Cached data: sensor=${cachedData.name} age=${cacheAgeMin}min aqi=${cachedData.primaryAqi}")
+            } else {
+                AppLog.d("AqiRepository", "No cached data")
+            }
 
             // Only consider sensors that include a primary AQI reading.
             val sensorsWithAqi = masterData.sensors.filter { it.primaryAqi != null }
@@ -48,6 +55,7 @@ class AqiRepository(private val context: Context) {
             }
 
             val sensorsWithTodayAqi = sensorsWithAqi.filter { isFromToday(it.timestamp) }
+            AppLog.d("AqiRepository", "Filtered: ${sensorsWithAqi.size} with AQI, ${sensorsWithTodayAqi.size} with today's AQI")
 
             val sensorToSave = if (sensorsWithTodayAqi.isNotEmpty()) {
                 locationHelper.findNearestSensorFromData(location, sensorsWithTodayAqi)
@@ -99,8 +107,76 @@ class AqiRepository(private val context: Context) {
             return true
 
         } catch (e: Exception) {
-            AppLog.e("AqiRepository", "Error syncing data", e)
+            AppLog.e("AqiRepository", "Error syncing data [${e.javaClass.simpleName}]: ${e.message}", e)
             return false
         }
+    }
+
+    /** Sync forecast data. Throttled to once per 24 hours. */
+    suspend fun syncForecast() {
+        try {
+            val lastSync = prefs.getLastForecastSync()
+            val hoursSinceLast = (System.currentTimeMillis() - lastSync) / 3_600_000L
+            if (hoursSinceLast < 24) {
+                AppLog.d("AqiRepository", "Forecast sync skipped — last sync ${hoursSinceLast}h ago")
+                return
+            }
+
+            AppLog.d("AqiRepository", "Fetching forecast data...")
+            val forecastPayload = api.getForecastData()
+
+            if (forecastPayload.locations.isEmpty()) {
+                AppLog.w("AqiRepository", "No forecast locations in payload")
+                return
+            }
+
+            // Try to match by current sensor name
+            val currentSensor = prefs.getLatestSensorData()
+            val matched = if (currentSensor != null) {
+                forecastPayload.locations.find { it.name == currentSensor.name }
+                    ?: findNearestForecastLocation(currentSensor.lat, currentSensor.lon, forecastPayload.locations)
+            } else {
+                // No sensor yet — try device location
+                val cacheMinutes = prefs.getLocationCacheMinutes()
+                val location = locationHelper.getOptimizedLocation(cacheMinutes)
+                if (location != null) {
+                    findNearestForecastLocation(location.latitude, location.longitude, forecastPayload.locations)
+                } else {
+                    null
+                }
+            }
+
+            if (matched == null) {
+                AppLog.w("AqiRepository", "Could not match a forecast location")
+                return
+            }
+
+            AppLog.d("AqiRepository", "Matched forecast location: ${matched.name} with ${matched.forecasts.size} days")
+            prefs.saveForecastData(matched.name, matched.forecasts)
+
+        } catch (e: Exception) {
+            AppLog.e("AqiRepository", "Error syncing forecast", e)
+        }
+    }
+
+    private fun findNearestForecastLocation(
+        lat: Double, lon: Double, locations: List<ForecastLocation>
+    ): ForecastLocation? {
+        if (locations.isEmpty()) return null
+        var nearest: ForecastLocation? = null
+        var minDist = Double.MAX_VALUE
+        for (loc in locations) {
+            val dLat = Math.toRadians(loc.lat - lat)
+            val dLon = Math.toRadians(loc.lon - lon)
+            val a = kotlin.math.sin(dLat / 2).let { it * it } +
+                kotlin.math.cos(Math.toRadians(lat)) * kotlin.math.cos(Math.toRadians(loc.lat)) *
+                kotlin.math.sin(dLon / 2).let { it * it }
+            val dist = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+            if (dist < minDist) {
+                minDist = dist
+                nearest = loc
+            }
+        }
+        return nearest
     }
 }

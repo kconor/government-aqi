@@ -23,11 +23,16 @@ import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material.*
 import com.example.aqi.data.AqiViewModel
+import com.example.aqi.data.ForecastDay
 import com.example.aqi.data.SensorData
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
+import java.util.Locale
 
 /** Map an AQI value to the triangle drawable resource (0-5 = Good to Hazardous). */
 private fun aqiTriangleRes(aqi: Int): Int = when {
@@ -40,12 +45,11 @@ private fun aqiTriangleRes(aqi: Int): Int = when {
 }
 
 /** Format UTC epoch seconds as a local time string, e.g. "2:00 PM" or "Yesterday 2:00 PM". */
-private fun formatTimestamp(epochSeconds: Long): String {
+private fun formatTimestamp(epochSeconds: Long, today: LocalDate): String {
     val zone = ZoneId.systemDefault()
     val zonedTime = Instant.ofEpochSecond(epochSeconds).atZone(zone)
     val timeStr = zonedTime.format(DateTimeFormatter.ofPattern("h:mm a"))
     val sensorDate = zonedTime.toLocalDate()
-    val today = LocalDate.now(zone)
     return when {
         sensorDate == today -> timeStr
         sensorDate == today.minusDays(1) -> "Yesterday $timeStr"
@@ -80,14 +84,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class Page { DETAILS, SETTINGS, ABOUT }
+enum class Page { DETAILS, FORECAST, SETTINGS, ABOUT }
 
 @Composable
 fun AqiApp(viewModel: AqiViewModel) {
     val pages = Page.entries
     val pagerState = rememberPagerState { pages.size }
-    val latestData by viewModel.latestData.collectAsState()
-    val cacheMinutes by viewModel.locationCacheMinutes.collectAsState()
 
     val pageIndicatorState = remember {
         object : PageIndicatorState {
@@ -105,11 +107,15 @@ fun AqiApp(viewModel: AqiViewModel) {
         HorizontalPager(state = pagerState) { pageIndex ->
             when (pages[pageIndex]) {
                 Page.DETAILS -> DetailsPage(
-                    data = latestData,
+                    dataFlow = viewModel.latestData,
                     onRefresh = { viewModel.forceRefresh() }
                 )
+                Page.FORECAST -> ForecastPage(
+                    forecastFlow = viewModel.forecastData,
+                    locationNameFlow = viewModel.latestData.map { it?.name }
+                )
                 Page.SETTINGS -> SettingsPage(
-                    cacheMinutes = cacheMinutes,
+                    cacheMinutesFlow = viewModel.locationCacheMinutes,
                     onCacheMinutesChanged = { viewModel.setLocationCacheMinutes(it) }
                 )
                 Page.ABOUT -> AboutPage()
@@ -120,9 +126,12 @@ fun AqiApp(viewModel: AqiViewModel) {
 
 @Composable
 fun DetailsPage(
-    data: SensorData?,
+    dataFlow: Flow<SensorData?>,
     onRefresh: () -> Unit
 ) {
+    val data by dataFlow.collectAsState(initial = null)
+    val today = remember { LocalDate.now() }
+
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -140,13 +149,13 @@ fun DetailsPage(
         if (data != null) {
             item {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(data.name, style = MaterialTheme.typography.body2, color = MaterialTheme.colors.secondary, textAlign = TextAlign.Center)
-                    Text("Latest data: ${formatTimestamp(data.timestamp)}", style = MaterialTheme.typography.caption3)
+                    Text(data!!.name, style = MaterialTheme.typography.body2, color = MaterialTheme.colors.secondary, textAlign = TextAlign.Center)
+                    Text("Latest data: ${formatTimestamp(data!!.timestamp, today)}", style = MaterialTheme.typography.caption3)
                     Spacer(modifier = Modifier.height(12.dp))
                 }
             }
 
-            data.metrics.forEach { (metricName, value) ->
+            data!!.metrics.forEach { (metricName, value) ->
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -185,6 +194,84 @@ fun DetailsPage(
     }
 }
 
+/** Convert "YYYY-MM-DD" to a friendly day label: "Today", "Tomorrow", or abbreviated weekday. */
+private fun forecastDayLabel(dateStr: String, today: LocalDate): String {
+    val date = LocalDate.parse(dateStr)
+    return when (date) {
+        today -> "Today"
+        today.plusDays(1) -> "Tomorrow"
+        else -> date.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.getDefault())
+    }
+}
+
+@Composable
+fun ForecastPage(
+    forecastFlow: Flow<List<ForecastDay>?>,
+    locationNameFlow: Flow<String?>
+) {
+    val forecasts by forecastFlow.collectAsState(initial = null)
+    val locationName by locationNameFlow.collectAsState(initial = null)
+    val today = remember { LocalDate.now() }
+
+    ScalingLazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        autoCentering = null,
+        anchorType = ScalingLazyListAnchorType.ItemStart
+    ) {
+        item {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Spacer(modifier = Modifier.height(24.dp))
+                Text("Forecast", style = MaterialTheme.typography.title2)
+                if (locationName != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(locationName!!, style = MaterialTheme.typography.body2, color = MaterialTheme.colors.secondary, textAlign = TextAlign.Center)
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
+
+        if (forecasts.isNullOrEmpty()) {
+            item {
+                Text("No forecast data.", style = MaterialTheme.typography.caption1)
+            }
+        } else {
+            forecasts!!.forEach { day ->
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(forecastDayLabel(day.date, today), style = MaterialTheme.typography.body1)
+                            if (day.parameter != null) {
+                                Text(day.parameter, style = MaterialTheme.typography.caption3, color = MaterialTheme.colors.secondary)
+                            }
+                            if (day.actionDay == true) {
+                                Text("Action Day", style = MaterialTheme.typography.caption3, color = MaterialTheme.colors.primary)
+                            }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (day.aqiValue != null) {
+                                Text(day.aqiValue.toString(), style = MaterialTheme.typography.body1, color = MaterialTheme.colors.primary)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Image(
+                                    painter = painterResource(aqiTriangleRes(day.aqiValue)),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            } else if (day.category != null) {
+                                Text(day.category, style = MaterialTheme.typography.body2, color = MaterialTheme.colors.primary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun AboutPage() {
     ScalingLazyColumn(
@@ -207,9 +294,10 @@ fun AboutPage() {
 
 @Composable
 fun SettingsPage(
-    cacheMinutes: Int,
+    cacheMinutesFlow: Flow<Int>,
     onCacheMinutesChanged: (Int) -> Unit
 ) {
+    val cacheMinutes by cacheMinutesFlow.collectAsState(initial = 60)
     val options = listOf(15, 30, 60, 120, 240)
 
     ScalingLazyColumn(

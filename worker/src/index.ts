@@ -26,7 +26,11 @@ export default {
   // Handle HTTP requests — serve from edge cache, only hit R2 on cache miss
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname !== '/api/aqi') {
+    const r2Key = url.pathname === '/api/aqi' ? 'all_data.json'
+                : url.pathname === '/api/forecast' ? 'forecast_data.json'
+                : null;
+
+    if (!r2Key) {
       return new Response(JSON.stringify({ error: 'Not found' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' }
@@ -47,7 +51,7 @@ export default {
     if (response) return response;
 
     // Cache miss — read from R2
-    const object = await env.AQI_BUCKET.get('all_data.json');
+    const object = await env.AQI_BUCKET.get(r2Key);
     if (!object) {
       return new Response(JSON.stringify({ error: 'Data not found' }), {
         status: 404,
@@ -190,15 +194,81 @@ async function updateAqiData(env: Env) {
         t: latestTimestamp, // Global timestamp (UTC epoch seconds)
         s: Array.from(locationsMap.values())
     };
-    
+
     const jsonData = JSON.stringify(finalData);
-    
-    // Write ONE single file to R2
+
+    // Write observation data to R2
     await env.AQI_BUCKET.put('all_data.json', jsonData, {
       httpMetadata: { contentType: 'application/json' }
     });
-    
+
     console.log(`Saved all_data.json with ${finalData.s.length} sensors. Total size: ${jsonData.length} bytes.`);
+
+    // --- Forecast parsing ---
+    const forecastMap = new Map<string, any>();
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const parts = line.split('|');
+      if (parts.length < 15) continue;
+
+      const dataType = parts[5];
+      const primary = parts[6];
+      if (dataType !== 'F' || primary !== 'Y') continue;
+
+      const reportingArea = parts[7];
+      const stateCode = parts[8];
+      const lat = parseFloat(parts[9]);
+      const lon = parseFloat(parts[10]);
+      if (isNaN(lat) || isNaN(lon)) continue;
+
+      const name = stateCode.trim() ? `${reportingArea.trim()}, ${stateCode.trim()}` : reportingArea.trim();
+      const validDate = parts[1]; // MM/DD/YY
+      const recordSequence = parseInt(parts[4], 10);
+      const parameterName = parts[11].trim();
+      const aqiValueRaw = parts[12].trim();
+      const aqiValue = aqiValueRaw ? parseInt(aqiValueRaw, 10) : null;
+      const category = parts[13].trim() || null;
+      const actionDay = parts[14].trim().toLowerCase() === 'yes';
+
+      // Convert MM/DD/YY to YYYY-MM-DD
+      const dp = validDate.split('/');
+      if (dp.length !== 3) continue;
+      let yr = parseInt(dp[2], 10);
+      if (yr < 100) yr += 2000;
+      const dateStr = `${yr}-${dp[0].padStart(2, '0')}-${dp[1].padStart(2, '0')}`;
+
+      if (!forecastMap.has(name)) {
+        forecastMap.set(name, { n: name, la: lat, lo: lon, f: [] });
+      }
+
+      forecastMap.get(name)!.f.push({
+        d: dateStr,
+        A: aqiValue !== null && !isNaN(aqiValue) ? aqiValue : null,
+        C: category,
+        p: parameterName,
+        a: actionDay,
+        _seq: recordSequence // used for sorting, stripped before output
+      });
+    }
+
+    // Sort each location's forecasts by record sequence, then strip the sort key
+    for (const loc of forecastMap.values()) {
+      loc.f.sort((a: any, b: any) => a._seq - b._seq);
+      loc.f = loc.f.map(({ _seq, ...rest }: any) => rest);
+    }
+
+    const forecastData = {
+      t: Math.floor(Date.now() / 1000),
+      s: Array.from(forecastMap.values())
+    };
+
+    const forecastJson = JSON.stringify(forecastData);
+    await env.AQI_BUCKET.put('forecast_data.json', forecastJson, {
+      httpMetadata: { contentType: 'application/json' }
+    });
+
+    console.log(`Saved forecast_data.json with ${forecastData.s.length} locations. Total size: ${forecastJson.length} bytes.`);
 
   } catch (err: any) {
     console.error("Error updating AQI data:", err.message);

@@ -1,8 +1,17 @@
 package com.example.aqi
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.work.WorkManager
 import com.example.aqi.data.AqiPreferences
+import com.example.aqi.receiver.SyncAlarmScheduler
 import com.example.aqi.worker.SyncWorkScheduler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class AqiApplication : Application() {
     lateinit var prefs: AqiPreferences
@@ -12,7 +21,25 @@ class AqiApplication : Application() {
         super.onCreate()
         prefs = AqiPreferences(this)
 
-        SyncWorkScheduler.schedulePeriodicSync(this)
+        // Cancel legacy periodic WorkManager sync from previous versions
+        WorkManager.getInstance(this).cancelUniqueWork(SyncWorkScheduler.PERIODIC_SYNC_WORK_NAME)
+
+        // Schedule hourly alarm for reliable background sync
+        SyncAlarmScheduler.scheduleAlarm(this)
+
+        // Immediate sync on app start
         SyncWorkScheduler.enqueueImmediateSync(this, "app_start")
+
+        // Sync on wake from Doze — ACTION_SCREEN_ON must be runtime-registered
+        registerReceiver(
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    CoroutineScope(Dispatchers.IO).launch {
+                        SyncWorkScheduler.enqueueIfStale(context, "screen_on")
+                    }
+                }
+            },
+            IntentFilter(Intent.ACTION_SCREEN_ON)
+        )
     }
 }

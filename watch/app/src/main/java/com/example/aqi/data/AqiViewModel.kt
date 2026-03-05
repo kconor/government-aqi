@@ -26,17 +26,14 @@ class AqiViewModel(application: Application) : AndroidViewModel(application) {
     val locationCacheMinutes: StateFlow<Int> = prefs.locationCacheMinutesFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 60)
 
-    init {
-        viewModelScope.launch {
-            AppLog.d("AqiViewModel", "Running initial sync")
-            if (repo.syncData()) complicationUpdater.requestUpdateAll()
-        }
-    }
+    val forecastData: StateFlow<List<ForecastDay>?> = prefs.forecastDataFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     fun forceRefresh() {
         viewModelScope.launch {
             AppLog.d("AqiViewModel", "Running forceRefresh")
             if (repo.syncData()) complicationUpdater.requestUpdateAll()
+            repo.syncForecast()
         }
     }
 

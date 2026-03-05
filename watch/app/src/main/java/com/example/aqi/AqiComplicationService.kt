@@ -28,16 +28,22 @@ class AqiComplicationService : SuspendingComplicationDataSourceService() {
     }
 
     override suspend fun onComplicationRequest(request: ComplicationRequest): ComplicationData? {
-        val prefs = applicationContext.aqiPrefs
-        val data = prefs.latestSensorDataFlow.first()
         AppLog.d(
             "AqiComplicationService",
-            "onComplicationRequest id=${request.complicationInstanceId} type=${request.complicationType} hasData=${data != null}"
+            "onComplicationRequest id=${request.complicationInstanceId} type=${request.complicationType}"
         )
 
+        val prefs = applicationContext.aqiPrefs
+        val data = prefs.latestSensorDataFlow.first()
+
         if (data == null || data.metrics.isEmpty()) {
+            AppLog.d("AqiComplicationService", "No data or empty metrics for complication request")
             return createNoDataComplication(request.complicationType)
         }
+
+        val dataAgeMin = (System.currentTimeMillis() - data.timestamp * 1000) / 60_000
+        AppLog.d("AqiComplicationService",
+            "Serving complication: sensor=${data.name} age=${dataAgeMin}min aqi=${data.primaryAqi}")
 
         // Find the pollutant with the highest AQI value
         val worst = data.metrics.maxByOrNull { it.value }
@@ -101,7 +107,7 @@ class AqiComplicationService : SuspendingComplicationDataSourceService() {
                 RangedValueComplicationData.Builder(
                     value = value.toFloat(),
                     min = 0f,
-                    max = 500f,
+                    max = 50f,
                     contentDescription = text
                 )
                     .setText(text)
