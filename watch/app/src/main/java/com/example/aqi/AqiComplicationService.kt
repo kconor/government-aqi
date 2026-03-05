@@ -9,7 +9,6 @@ import com.example.aqi.data.aqiPrefs
 import com.example.aqi.worker.SyncWorkScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class AqiComplicationService : SuspendingComplicationDataSourceService() {
@@ -39,7 +38,7 @@ class AqiComplicationService : SuspendingComplicationDataSourceService() {
         )
 
         val prefs = applicationContext.aqiPrefs
-        val data = prefs.latestSensorDataFlow.first()
+        val data = prefs.cachedSensorData ?: prefs.getLatestSensorData()
 
         if (data == null || data.metrics.isEmpty()) {
             AppLog.d("AqiComplicationService", "No data or empty metrics for complication request")

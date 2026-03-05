@@ -26,6 +26,7 @@ class AqiPreferences(private val context: Context) {
 
     companion object {
         private val gson = Gson()
+        private val forecastListType = object : TypeToken<List<ForecastDay>>() {}.type
         val LATEST_SENSOR_DATA_KEY = stringPreferencesKey("latest_sensor_data_json")
         val LOCATION_CACHE_MINUTES_KEY = intPreferencesKey("location_cache_minutes")
         val LAST_SYNC_ATTEMPT_KEY = longPreferencesKey("last_sync_attempt")
@@ -34,24 +35,39 @@ class AqiPreferences(private val context: Context) {
         val LAST_FORECAST_SYNC_KEY = longPreferencesKey("last_forecast_sync")
     }
 
+    /** In-memory cache for non-suspending reads (e.g. complication service). */
+    @Volatile
+    var cachedSensorData: SensorData? = null
+        private set
+
     val latestSensorDataFlow: Flow<SensorData?> = context.dataStore.data
         .map { prefs -> prefs[LATEST_SENSOR_DATA_KEY] }
         .distinctUntilChanged()
-        .map { json ->
-            if (json != null) {
-                gson.fromJson(json, SensorData::class.java)
-            } else {
-                null
-            }
-        }
+        .map { json -> json?.let { gson.fromJson(it, SensorData::class.java) } }
 
-    val locationCacheMinutesFlow: Flow<Int> = context.dataStore.data.map { prefs ->
-        prefs[LOCATION_CACHE_MINUTES_KEY] ?: 60 // Default to 60 minutes
+    val locationCacheMinutesFlow: Flow<Int> = context.dataStore.data
+        .map { prefs -> prefs[LOCATION_CACHE_MINUTES_KEY] ?: 60 }
+
+    val forecastDataFlow: Flow<List<ForecastDay>?> = context.dataStore.data
+        .map { prefs -> prefs[FORECAST_DATA_KEY] }
+        .distinctUntilChanged()
+        .map { json -> json?.let { gson.fromJson<List<ForecastDay>>(it, forecastListType) } }
+
+    /** Batch-read all prefs in a single DataStore access. */
+    suspend fun readSnapshot(): Snapshot {
+        val prefs = context.dataStore.data.first()
+        return Snapshot(
+            latestSensorData = prefs[LATEST_SENSOR_DATA_KEY]?.let { gson.fromJson(it, SensorData::class.java) },
+            locationCacheMinutes = prefs[LOCATION_CACHE_MINUTES_KEY] ?: 60,
+            lastSyncAttempt = prefs[LAST_SYNC_ATTEMPT_KEY] ?: 0L,
+            forecastLocationName = prefs[FORECAST_LOCATION_KEY],
+            forecastData = prefs[FORECAST_DATA_KEY]?.let { gson.fromJson<List<ForecastDay>>(it, forecastListType) },
+            lastForecastSync = prefs[LAST_FORECAST_SYNC_KEY] ?: 0L
+        )
     }
 
     suspend fun getLocationCacheMinutes(): Int {
-        val prefs = context.dataStore.data.first()
-        return prefs[LOCATION_CACHE_MINUTES_KEY] ?: 60
+        return context.dataStore.data.first()[LOCATION_CACHE_MINUTES_KEY] ?: 60
     }
 
     suspend fun setLocationCacheMinutes(minutes: Int) {
@@ -61,12 +77,12 @@ class AqiPreferences(private val context: Context) {
     }
 
     suspend fun getLatestSensorData(): SensorData? {
-        val prefs = context.dataStore.data.first()
-        val json = prefs[LATEST_SENSOR_DATA_KEY]
-        return json?.let { gson.fromJson(it, SensorData::class.java) }
+        val json = context.dataStore.data.first()[LATEST_SENSOR_DATA_KEY] ?: return null
+        return gson.fromJson(json, SensorData::class.java)
     }
 
     suspend fun saveLatestSensorData(data: SensorData) {
+        cachedSensorData = data
         val json = gson.toJson(data)
         context.dataStore.edit { prefs ->
             prefs[LATEST_SENSOR_DATA_KEY] = json
@@ -74,8 +90,7 @@ class AqiPreferences(private val context: Context) {
     }
 
     suspend fun getLastSyncAttempt(): Long {
-        val prefs = context.dataStore.data.first()
-        return prefs[LAST_SYNC_ATTEMPT_KEY] ?: 0L
+        return context.dataStore.data.first()[LAST_SYNC_ATTEMPT_KEY] ?: 0L
     }
 
     suspend fun setLastSyncAttempt(timeMillis: Long) {
@@ -83,17 +98,6 @@ class AqiPreferences(private val context: Context) {
             prefs[LAST_SYNC_ATTEMPT_KEY] = timeMillis
         }
     }
-
-    // --- Forecast ---
-
-    val forecastDataFlow: Flow<List<ForecastDay>?> = context.dataStore.data
-        .map { prefs -> prefs[FORECAST_DATA_KEY] }
-        .distinctUntilChanged()
-        .map { json ->
-            if (json == null) return@map null
-            val type = object : TypeToken<List<ForecastDay>>() {}.type
-            gson.fromJson<List<ForecastDay>>(json, type)
-        }
 
     suspend fun saveForecastData(locationName: String, forecasts: List<ForecastDay>) {
         context.dataStore.edit { prefs ->
@@ -107,12 +111,19 @@ class AqiPreferences(private val context: Context) {
         val prefs = context.dataStore.data.first()
         val name = prefs[FORECAST_LOCATION_KEY] ?: return null
         val json = prefs[FORECAST_DATA_KEY] ?: return null
-        val type = object : TypeToken<List<ForecastDay>>() {}.type
-        return name to gson.fromJson(json, type)
+        return name to gson.fromJson(json, forecastListType)
     }
 
     suspend fun getLastForecastSync(): Long {
-        val prefs = context.dataStore.data.first()
-        return prefs[LAST_FORECAST_SYNC_KEY] ?: 0L
+        return context.dataStore.data.first()[LAST_FORECAST_SYNC_KEY] ?: 0L
     }
+
+    data class Snapshot(
+        val latestSensorData: SensorData?,
+        val locationCacheMinutes: Int,
+        val lastSyncAttempt: Long,
+        val forecastLocationName: String?,
+        val forecastData: List<ForecastDay>?,
+        val lastForecastSync: Long
+    )
 }

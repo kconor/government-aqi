@@ -52,15 +52,16 @@ object SyncWorkScheduler {
     suspend fun enqueueIfStale(context: Context, triggerReason: String) {
         val prefs = context.aqiPrefs
         val now = System.currentTimeMillis()
+        val snapshot = prefs.readSnapshot()
 
-        val lastAttempt = prefs.getLastSyncAttempt()
+        val lastAttempt = snapshot.lastSyncAttempt
         if (now - lastAttempt < MIN_SYNC_INTERVAL_MS) {
             AppLog.d("SyncWorkScheduler",
                 "enqueueIfStale skipped: last attempt ${(now - lastAttempt) / 1000}s ago (<15 min). reason=$triggerReason")
             return
         }
 
-        val sensorData = prefs.getLatestSensorData()
+        val sensorData = snapshot.latestSensorData
         if (sensorData != null) {
             val dataAgeMs = now - (sensorData.timestamp * 1000)
             if (dataAgeMs < STALE_DATA_THRESHOLD_MS) {

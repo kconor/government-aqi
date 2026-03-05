@@ -26,8 +26,9 @@ class AqiRepository(private val context: Context) {
             AppLog.d("AqiRepository", "Fetching master data from network...")
             val masterData = api.getAllData()
             AppLog.d("AqiRepository", "Received ${masterData.sensors.size} sensors from API")
+            val snapshot = prefs.readSnapshot()
 
-            val cacheMinutes = prefs.getLocationCacheMinutes()
+            val cacheMinutes = snapshot.locationCacheMinutes
             val location = locationHelper.getOptimizedLocation(cacheMinutes)
             if (location == null) {
                 AppLog.e("AqiRepository", "Could not get current location.")
@@ -39,7 +40,7 @@ class AqiRepository(private val context: Context) {
                 return false
             }
 
-            val cachedData = prefs.getLatestSensorData()
+            val cachedData = snapshot.latestSensorData
             if (cachedData != null) {
                 val cacheAgeMin = (System.currentTimeMillis() - cachedData.timestamp * 1000) / 60_000
                 AppLog.d("AqiRepository", "Cached data: sensor=${cachedData.name} age=${cacheAgeMin}min aqi=${cachedData.primaryAqi}")
@@ -115,7 +116,8 @@ class AqiRepository(private val context: Context) {
     /** Sync forecast data. Throttled to once per 24 hours. */
     suspend fun syncForecast() {
         try {
-            val lastSync = prefs.getLastForecastSync()
+            val snapshot = prefs.readSnapshot()
+            val lastSync = snapshot.lastForecastSync
             val hoursSinceLast = (System.currentTimeMillis() - lastSync) / 3_600_000L
             if (hoursSinceLast < 24) {
                 AppLog.d("AqiRepository", "Forecast sync skipped — last sync ${hoursSinceLast}h ago")
@@ -131,13 +133,13 @@ class AqiRepository(private val context: Context) {
             }
 
             // Try to match by current sensor name
-            val currentSensor = prefs.getLatestSensorData()
+            val currentSensor = snapshot.latestSensorData
             val matched = if (currentSensor != null) {
                 forecastPayload.locations.find { it.name == currentSensor.name }
                     ?: findNearestForecastLocation(currentSensor.lat, currentSensor.lon, forecastPayload.locations)
             } else {
                 // No sensor yet — try device location
-                val cacheMinutes = prefs.getLocationCacheMinutes()
+                val cacheMinutes = snapshot.locationCacheMinutes
                 val location = locationHelper.getOptimizedLocation(cacheMinutes)
                 if (location != null) {
                     findNearestForecastLocation(location.latitude, location.longitude, forecastPayload.locations)
