@@ -24,31 +24,6 @@ object SyncWorkScheduler {
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
-    fun enqueueImmediateSync(
-        context: Context,
-        triggerReason: String,
-        workPolicy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP
-    ) {
-        val inputData = Data.Builder()
-            .putString(INPUT_KEY_TRIGGER_REASON, triggerReason)
-            .build()
-
-        val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>()
-            .setInputData(inputData)
-            .setConstraints(connectedNetworkConstraints())
-            .build()
-
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            IMMEDIATE_SYNC_WORK_NAME,
-            workPolicy,
-            syncRequest
-        )
-        AppLog.d(
-            "SyncWorkScheduler",
-            "Immediate sync enqueued. reason=$triggerReason policy=$workPolicy"
-        )
-    }
-
     suspend fun enqueueIfStale(context: Context, triggerReason: String) {
         val prefs = context.aqiPrefs
         val now = System.currentTimeMillis()
@@ -75,10 +50,7 @@ object SyncWorkScheduler {
         AppLog.d("SyncWorkScheduler",
             "enqueueIfStale: data is ${dataAgeMin}min old (threshold=${STALE_DATA_THRESHOLD_MS / 60_000}min). Enqueueing sync. reason=$triggerReason")
         prefs.setLastSyncAttempt(now)
-        enqueueExpeditedSync(context, triggerReason)
-    }
 
-    private fun enqueueExpeditedSync(context: Context, triggerReason: String) {
         val inputData = Data.Builder()
             .putString(INPUT_KEY_TRIGGER_REASON, triggerReason)
             .build()
@@ -94,9 +66,6 @@ object SyncWorkScheduler {
             ExistingWorkPolicy.KEEP,
             syncRequest
         )
-        AppLog.d(
-            "SyncWorkScheduler",
-            "Expedited sync enqueued. reason=$triggerReason policy=${ExistingWorkPolicy.KEEP}"
-        )
+        AppLog.d("SyncWorkScheduler", "Sync enqueued. reason=$triggerReason")
     }
 }
