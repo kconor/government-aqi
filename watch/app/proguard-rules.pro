@@ -1,9 +1,10 @@
-# Keep metadata used by Retrofit/Gson/coroutines reflection.
+# Keep metadata used by Gson/coroutines reflection.
 -keepattributes Signature,*Annotation*,EnclosingMethod,InnerClasses
 
 # Gson reflection on generic types and @SerializedName fields.
 -keep class com.google.gson.reflect.TypeToken { *; }
 -keep class * extends com.google.gson.reflect.TypeToken
+-keep class com.example.aqi.AppLog { *; }
 -keep class com.example.aqi.data.MasterDataPayload { *; }
 -keep class com.example.aqi.data.SensorData { *; }
 -keep class com.example.aqi.data.ForecastPayload { *; }

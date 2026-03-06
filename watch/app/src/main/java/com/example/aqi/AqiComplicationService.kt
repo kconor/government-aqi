@@ -2,7 +2,6 @@ package com.example.aqi
 
 import android.app.PendingIntent
 import android.content.Intent
-import android.util.Log
 import androidx.wear.watchface.complications.data.*
 import androidx.wear.watchface.complications.datasource.ComplicationRequest
 import androidx.wear.watchface.complications.datasource.SuspendingComplicationDataSourceService
@@ -41,15 +40,18 @@ class AqiComplicationService : SuspendingComplicationDataSourceService() {
         val prefs = applicationContext.aqiPrefs
         val cached = prefs.cachedSensorData
         val data = cached ?: prefs.getLatestSensorData()
-        Log.d("AqiComplSvc", "onRequest: cached=${cached != null} data=${data != null} metrics=${data?.metrics?.size}")
+        AppLog.d(
+            "AqiComplSvc",
+            "onRequest: cached=${cached != null} data=${data != null} metrics=${data?.metrics?.size}"
+        )
 
         if (data == null || data.metrics.isEmpty()) {
-            Log.d("AqiComplSvc", "No data or empty metrics")
+            AppLog.d("AqiComplSvc", "No data or empty metrics")
             return createNoDataComplication(request.complicationType)
         }
 
         val dataAgeMin = (System.currentTimeMillis() - data.timestamp * 1000) / 60_000
-        Log.d("AqiComplSvc", "Serving: sensor=${data.name} age=${dataAgeMin}min aqi=${data.primaryAqi}")
+        AppLog.d("AqiComplSvc", "Serving: sensor=${data.name} age=${dataAgeMin}min aqi=${data.primaryAqi}")
 
         // Find the pollutant with the highest AQI value
         val worst = data.metrics.maxByOrNull { it.value }

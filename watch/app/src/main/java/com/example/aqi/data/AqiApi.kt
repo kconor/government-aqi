@@ -1,20 +1,38 @@
 package com.example.aqi.data
 
 import com.example.aqi.BuildConfig
+import com.google.gson.Gson
 import okhttp3.OkHttpClient
-import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory
-import retrofit2.http.GET
+import okhttp3.Request
 import java.util.concurrent.TimeUnit
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-interface AqiApi {
-    @GET("api/aqi")
-    suspend fun getAllData(): MasterDataPayload
+class AqiApi private constructor(
+    private val client: OkHttpClient,
+    private val gson: Gson
+) {
+    fun getAllData(): MasterDataPayload = getJson("api/aqi", MasterDataPayload::class.java)
 
-    @GET("api/forecast")
-    suspend fun getForecastData(): ForecastPayload
+    fun getForecastData(): ForecastPayload = getJson("api/forecast", ForecastPayload::class.java)
+
+    private fun <T : Any> getJson(path: String, clazz: Class<T>): T {
+        val request = Request.Builder()
+            .url(BuildConfig.AQI_BASE_URL + path)
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IllegalStateException("HTTP ${response.code()} from $path: ${response.message()}")
+            }
+
+            val body = response.body()?.string()
+                ?: throw IllegalStateException("Empty body from $path")
+
+            return gson.fromJson(body, clazz)
+                ?: throw IllegalStateException("Failed to parse response from $path")
+        }
+    }
 
     companion object {
         private fun hmacHex(secret: String, message: String): String {
@@ -38,12 +56,7 @@ interface AqiApi {
                 }
                 .build()
 
-            Retrofit.Builder()
-                .baseUrl(BuildConfig.AQI_BASE_URL)
-                .client(client)
-                .addConverterFactory(GsonConverterFactory.create())
-                .build()
-                .create(AqiApi::class.java)
+            AqiApi(client, Gson())
         }
     }
 }

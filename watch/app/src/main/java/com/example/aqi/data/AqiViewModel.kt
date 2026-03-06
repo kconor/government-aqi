@@ -32,8 +32,13 @@ class AqiViewModel(application: Application) : AndroidViewModel(application) {
     fun forceRefresh() {
         viewModelScope.launch {
             AppLog.d("AqiViewModel", "Running forceRefresh")
-            if (repo.syncData()) complicationUpdater.requestUpdateAll()
-            repo.syncForecast()
+            val outcome = repo.syncData()
+            if (!outcome.shouldRetry || outcome.didSaveData) {
+                complicationUpdater.requestUpdateAll()
+            }
+            if (!outcome.shouldRetry) {
+                repo.syncForecast()
+            }
         }
     }
 

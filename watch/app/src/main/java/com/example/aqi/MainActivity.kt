@@ -58,7 +58,6 @@ private fun formatTimestamp(epochSeconds: Long, today: LocalDate): String {
 }
 
 class MainActivity : ComponentActivity() {
-
     private val viewModel: AqiViewModel by viewModels()
 
     private val requestPermissionLauncher = registerForActivityResult(
