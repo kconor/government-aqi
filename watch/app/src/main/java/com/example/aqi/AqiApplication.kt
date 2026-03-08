@@ -29,7 +29,11 @@ class AqiApplication : Application() {
 
         // App start is non-user initiated, so only enqueue when data is stale.
         CoroutineScope(Dispatchers.IO).launch {
-            SyncWorkScheduler.enqueueIfStale(this@AqiApplication, "app_start")
+            SyncWorkScheduler.enqueueIfStale(
+                this@AqiApplication,
+                "app_start",
+                manageRetryAlarm = true
+            )
         }
 
         // Sync on wake from Doze — ACTION_SCREEN_ON must be runtime-registered
@@ -39,7 +43,11 @@ class AqiApplication : Application() {
                     val pendingResult = goAsync()
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
-                            SyncWorkScheduler.enqueueIfStale(context, "screen_on")
+                            SyncWorkScheduler.enqueueIfStale(
+                                context,
+                                "screen_on",
+                                manageRetryAlarm = true
+                            )
                         } finally {
                             pendingResult.finish()
                         }

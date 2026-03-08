@@ -3,15 +3,17 @@ package com.example.aqi
 import android.app.PendingIntent
 import android.content.Intent
 import androidx.wear.watchface.complications.data.*
+import androidx.wear.watchface.complications.datasource.ComplicationDataSourceService
 import androidx.wear.watchface.complications.datasource.ComplicationRequest
-import androidx.wear.watchface.complications.datasource.SuspendingComplicationDataSourceService
 import com.example.aqi.data.aqiPrefs
 import com.example.aqi.worker.SyncWorkScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 
-class AqiComplicationService : SuspendingComplicationDataSourceService() {
+class AqiComplicationService : ComplicationDataSourceService() {
 
     override fun getPreviewData(type: ComplicationType): ComplicationData? {
         return createComplicationData(45, "PM2.5", type)
@@ -22,7 +24,8 @@ class AqiComplicationService : SuspendingComplicationDataSourceService() {
         CoroutineScope(Dispatchers.IO).launch {
             SyncWorkScheduler.enqueueIfStale(
                 applicationContext,
-                "complication_activated:$complicationInstanceId:$type"
+                "complication_activated:$complicationInstanceId:$type",
+                manageRetryAlarm = true
             )
         }
         AppLog.d(
@@ -31,35 +34,37 @@ class AqiComplicationService : SuspendingComplicationDataSourceService() {
         )
     }
 
-    override suspend fun onComplicationRequest(request: ComplicationRequest): ComplicationData? {
+    override fun onComplicationRequest(
+        request: ComplicationRequest,
+        listener: ComplicationRequestListener
+    ) {
         AppLog.d(
             "AqiComplicationService",
             "onComplicationRequest id=${request.complicationInstanceId} type=${request.complicationType}"
         )
 
         val prefs = applicationContext.aqiPrefs
-        val cached = prefs.cachedSensorData
-        val data = cached ?: prefs.getLatestSensorData()
+        val snapshot = prefs.complicationSnapshot ?: runBlocking(Dispatchers.IO) {
+            withTimeoutOrNull(300) { prefs.awaitComplicationSnapshot() }
+        }
         AppLog.d(
             "AqiComplSvc",
-            "onRequest: cached=${cached != null} data=${data != null} metrics=${data?.metrics?.size}"
+            "onRequest: snapshot=${snapshot != null} memory=${prefs.complicationSnapshot != null}"
         )
 
-        if (data == null || data.metrics.isEmpty()) {
-            AppLog.d("AqiComplSvc", "No data or empty metrics")
-            return createNoDataComplication(request.complicationType)
+        val complicationData = if (snapshot == null) {
+            AppLog.d("AqiComplSvc", "No snapshot available for complication request")
+            createNoDataComplication(request.complicationType)
+        } else {
+            val dataAgeMin = (System.currentTimeMillis() - snapshot.timestamp * 1000) / 60_000
+            AppLog.d(
+                "AqiComplSvc",
+                "Serving: sensor=${snapshot.sensorName} age=${dataAgeMin}min metric=${snapshot.metric} value=${snapshot.value}"
+            )
+            createComplicationData(snapshot.value, snapshot.metric, request.complicationType)
         }
 
-        val dataAgeMin = (System.currentTimeMillis() - data.timestamp * 1000) / 60_000
-        AppLog.d("AqiComplSvc", "Serving: sensor=${data.name} age=${dataAgeMin}min aqi=${data.primaryAqi}")
-
-        // Find the pollutant with the highest AQI value
-        val worst = data.metrics.maxByOrNull { it.value }
-        if (worst == null) {
-            return createNoDataComplication(request.complicationType)
-        }
-
-        return createComplicationData(worst.value, worst.key, request.complicationType)
+        complicationData?.let(listener::onComplicationData)
     }
 
     private fun createNoDataComplication(type: ComplicationType): ComplicationData? {
@@ -81,8 +86,13 @@ class AqiComplicationService : SuspendingComplicationDataSourceService() {
                     .build()
             }
             ComplicationType.RANGED_VALUE -> {
-                // Show as SHORT_TEXT to avoid a misleading gauge at 0
-                ShortTextComplicationData.Builder(text, text)
+                RangedValueComplicationData.Builder(
+                    value = 0f,
+                    min = 0f,
+                    max = 1f,
+                    contentDescription = text
+                )
+                    .setText(text)
                     .setTitle(title)
                     .setTapAction(tapPendingIntent)
                     .build()

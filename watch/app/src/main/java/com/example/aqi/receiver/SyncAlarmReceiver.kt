@@ -12,17 +12,21 @@ import kotlinx.coroutines.launch
 class SyncAlarmReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        val action = intent.action ?: "alarm_tick"
+        val action = intent.action ?: SyncAlarmScheduler.ACTION_HOURLY_SYNC
         AppLog.d("SyncAlarmReceiver", "Received: $action")
 
-        // Always reschedule the next alarm
-        SyncAlarmScheduler.scheduleAlarm(context)
+        if (action != SyncAlarmScheduler.ACTION_RETRY_SYNC) {
+            SyncAlarmScheduler.scheduleAlarm(context)
+        }
 
-        // Receiver triggers are non-user initiated, so gate on stale data.
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                SyncWorkScheduler.enqueueIfStale(context, "receiver:$action")
+                SyncWorkScheduler.enqueueIfStale(
+                    context = context,
+                    triggerReason = "receiver:$action",
+                    manageRetryAlarm = true
+                )
             } finally {
                 pendingResult.finish()
             }
