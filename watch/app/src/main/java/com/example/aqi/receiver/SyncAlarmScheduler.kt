@@ -51,6 +51,18 @@ object SyncAlarmScheduler {
         AppLog.d("SyncAlarmScheduler", "Next alarm at ${fmt.format(trigger.time)} (jitter=${jitterSeconds}s)")
     }
 
+    fun cancelAlarm(context: Context) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val pendingIntent = makePendingIntent(
+            context = context,
+            action = ACTION_HOURLY_SYNC,
+            requestCode = HOURLY_ALARM_REQUEST_CODE
+        )
+        alarmManager.cancel(pendingIntent)
+        pendingIntent.cancel()
+        AppLog.d("SyncAlarmScheduler", "Hourly alarm canceled")
+    }
+
     fun scheduleRetryAlarm(context: Context) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val triggerAt = System.currentTimeMillis() + RETRY_DELAY_MS

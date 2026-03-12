@@ -61,6 +61,79 @@ class AqiRepository(private val context: Context) {
         return retry(didSaveData)
     }
 
+    private suspend fun saveAndReturnFreshnessOutcome(
+        sensorData: SensorData,
+        nowMs: Long,
+        reason: String
+    ): SyncOutcome {
+        prefs.saveLatestSensorData(sensorData)
+        return retryIfStale(
+            sensorData = sensorData,
+            nowMs = nowMs,
+            didSaveData = true,
+            reason = reason
+        ) ?: success(didSaveData = true)
+    }
+
+    private suspend fun refreshWithoutCurrentLocation(
+        cachedData: SensorData?,
+        sensorsWithAqi: List<SensorData>,
+        nowMs: Long
+    ): SyncOutcome {
+        if (cachedData == null) {
+            AppLog.e("AqiRepository", "Could not get current location and no cached sensor is available.")
+            return retry()
+        }
+
+        val updatedCachedSensor = sensorsWithAqi.find { it.name == cachedData.name }
+        if (updatedCachedSensor != null) {
+            AppLog.w(
+                "AqiRepository",
+                "Location unavailable. Refreshing cached sensor ${cachedData.name} without a new fix."
+            )
+            return saveAndReturnFreshnessOutcome(
+                sensorData = updatedCachedSensor,
+                nowMs = nowMs,
+                reason = "Refreshed cached sensor without a fresh location."
+            )
+        }
+
+        val cacheStillFresh =
+            cachedData.primaryAqi != null &&
+                isFromToday(cachedData.timestamp) &&
+                dataAgeMs(cachedData.timestamp, nowMs) < RETRY_STALE_DATA_THRESHOLD_MS
+        if (cacheStillFresh) {
+            AppLog.w(
+                "AqiRepository",
+                "Location unavailable and cached sensor ${cachedData.name} was not in the payload. Keeping cached same-day data."
+            )
+            return retryIfStale(
+                sensorData = cachedData,
+                nowMs = nowMs,
+                didSaveData = false,
+                reason = "Location unavailable and cached sensor could not be refreshed."
+            ) ?: success()
+        }
+
+        val nearestByCachedSensor = sensorsWithAqi.minByOrNull {
+            distanceKm(cachedData.lat, cachedData.lon, it.lat, it.lon)
+        }
+        if (nearestByCachedSensor != null) {
+            AppLog.w(
+                "AqiRepository",
+                "Location unavailable. Falling back to the sensor nearest cached sensor ${cachedData.name}: ${nearestByCachedSensor.name}."
+            )
+            return saveAndReturnFreshnessOutcome(
+                sensorData = nearestByCachedSensor,
+                nowMs = nowMs,
+                reason = "Selected fallback sensor using cached sensor coordinates."
+            )
+        }
+
+        AppLog.e("AqiRepository", "Location unavailable and no fallback sensor could be selected.")
+        return retry()
+    }
+
     /** Returns the sync outcome and whether a follow-up retry is needed for freshness. */
     suspend fun syncData(): SyncOutcome {
         try {
@@ -69,25 +142,18 @@ class AqiRepository(private val context: Context) {
             AppLog.d("AqiRepository", "Received ${masterData.sensors.size} sensors from API")
             val snapshot = prefs.readSnapshot()
             val nowMs = System.currentTimeMillis()
-
-            val cacheMinutes = snapshot.locationCacheMinutes
-            val location = locationHelper.getOptimizedLocation(cacheMinutes)
-            if (location == null) {
-                AppLog.e("AqiRepository", "Could not get current location.")
-                return retry()
-            }
-
-            if (masterData.sensors.isEmpty()) {
-                AppLog.e("AqiRepository", "No sensors in payload.")
-                return retry()
-            }
-
             val cachedData = snapshot.latestSensorData
+
             if (cachedData != null) {
                 val cacheAgeMin = dataAgeMs(cachedData.timestamp, nowMs) / 60_000
                 AppLog.d("AqiRepository", "Cached data: sensor=${cachedData.name} age=${cacheAgeMin}min aqi=${cachedData.primaryAqi}")
             } else {
                 AppLog.d("AqiRepository", "No cached data")
+            }
+
+            if (masterData.sensors.isEmpty()) {
+                AppLog.e("AqiRepository", "No sensors in payload.")
+                return retry()
             }
 
             // Only consider sensors that include a primary AQI reading.
@@ -102,21 +168,35 @@ class AqiRepository(private val context: Context) {
                 ) ?: success()
             }
 
-            // If we haven't moved far, reuse the same sensor by name instead of recomputing nearest.
+            val cacheMinutes = snapshot.locationCacheMinutes
+            val location = locationHelper.getOptimizedLocation(cacheMinutes)
+            if (location == null) {
+                return refreshWithoutCurrentLocation(
+                    cachedData = cachedData,
+                    sensorsWithAqi = sensorsWithAqi,
+                    nowMs = nowMs
+                )
+            }
+
+            AppLog.d(
+                "AqiRepository",
+                "Using device location lat=${location.latitude}, lon=${location.longitude}"
+            )
+
             if (cachedData != null) {
                 val distKm = distanceKm(location.latitude, location.longitude, cachedData.lat, cachedData.lon)
                 if (distKm < SENSOR_REUSE_THRESHOLD_KM) {
                     val updated = sensorsWithAqi.find { it.name == cachedData.name }
                     if (updated != null && isFromToday(updated.timestamp)) {
-                        AppLog.d("AqiRepository",
-                            "Within ${distKm.toInt()}km of ${cachedData.name}, reusing same sensor")
-                        prefs.saveLatestSensorData(updated)
-                        return retryIfStale(
+                        AppLog.d(
+                            "AqiRepository",
+                            "Within ${distKm.toInt()}km of ${cachedData.name}, reusing same sensor"
+                        )
+                        return saveAndReturnFreshnessOutcome(
                             sensorData = updated,
                             nowMs = nowMs,
-                            didSaveData = true,
                             reason = "Reused same sensor but payload timestamp has not advanced yet."
-                        ) ?: success(didSaveData = true)
+                        )
                     }
                 }
             }
@@ -127,12 +207,13 @@ class AqiRepository(private val context: Context) {
             val sensorToSave = if (sensorsWithTodayAqi.isNotEmpty()) {
                 locationHelper.findNearestSensorFromData(location, sensorsWithTodayAqi)
             } else {
-                val cacheIsToday =
+                val cacheStillFresh =
                     cachedData != null &&
-                    cachedData.primaryAqi != null &&
-                    isFromToday(cachedData.timestamp)
+                        cachedData.primaryAqi != null &&
+                        isFromToday(cachedData.timestamp) &&
+                        dataAgeMs(cachedData.timestamp, nowMs) < RETRY_STALE_DATA_THRESHOLD_MS
 
-                if (cacheIsToday) {
+                if (cacheStillFresh) {
                     AppLog.d("AqiRepository", "No nearby AQI sensor with today's date in payload. Keeping cached same-day data.")
                     return retryIfStale(
                         sensorData = cachedData,
@@ -155,9 +236,13 @@ class AqiRepository(private val context: Context) {
             }
 
             // Sticky sensor: prefer stale cached data from the same sensor over
-            // switching to a different nearby sensor, as long as the cache is from today.
+            // switching to a different nearby sensor, as long as the cache is still reasonably fresh.
             if (cachedData != null && sensorToSave.name != cachedData.name) {
-                if (isFromToday(cachedData.timestamp) && cachedData.primaryAqi != null) {
+                val cachedDataStillFresh =
+                    isFromToday(cachedData.timestamp) &&
+                        cachedData.primaryAqi != null &&
+                        dataAgeMs(cachedData.timestamp, nowMs) < RETRY_STALE_DATA_THRESHOLD_MS
+                if (cachedDataStillFresh) {
                     AppLog.d(
                         "AqiRepository",
                         "Nearest sensor changed from ${cachedData.name} to ${sensorToSave.name}. " +
@@ -180,14 +265,11 @@ class AqiRepository(private val context: Context) {
             }
 
             AppLog.d("AqiRepository", "Selected sensor: ${sensorToSave.name} with AQI: ${sensorToSave.primaryAqi}")
-            prefs.saveLatestSensorData(sensorToSave)
-            return retryIfStale(
+            return saveAndReturnFreshnessOutcome(
                 sensorData = sensorToSave,
                 nowMs = nowMs,
-                didSaveData = true,
                 reason = "Selected sensor is still older than the expected hourly freshness window."
-            ) ?: success(didSaveData = true)
-
+            )
         } catch (e: Exception) {
             AppLog.e("AqiRepository", "Error syncing data [${e.javaClass.simpleName}]: ${e.message}", e)
             return retry()

@@ -8,7 +8,7 @@ object AppLog {
     private const val GLOBAL_OVERRIDE_TAG = "AQI"
 
     private fun globalOverrideEnabled(priority: Int): Boolean {
-        return Log.isLoggable(GLOBAL_OVERRIDE_TAG, priority)
+        return Log.isLoggable(GLOBAL_OVERRIDE_TAG, priority) || AppLogControl.isEnabled()
     }
 
     private fun log(priority: Int, tag: String, message: String, throwable: Throwable? = null) {

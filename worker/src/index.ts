@@ -79,8 +79,16 @@ export default {
 
 // Timezone abbreviation → UTC offset in hours
 const TZ_OFFSETS: Record<string, number> = {
-  EST: -5, CST: -6, MST: -7, PST: -8, AKT: -9, HST: -10,
-  CET: +1, EAT: +3, IST: +5.5, NPT: +5.75, TJT: +5, GST: +4,
+  EST: -5, EDT: -4,
+  CST: -6, CDT: -5,
+  MST: -7, MDT: -6,
+  PST: -8, PDT: -7,
+  AKST: -9, AKDT: -8, AKT: -9,
+  AST: -4, ADT: -3,
+  HST: -10, HDT: -9,
+  CET: +1, CEST: +2, CES: +2,
+  EAT: +3, IST: +5.5, NPT: +5.75, TJT: +5, GST: +4,
+  UTC: 0, GMT: 0,
 };
 
 /** Parse EPA date/time/tz into UTC epoch seconds. Returns 0 on failure. */

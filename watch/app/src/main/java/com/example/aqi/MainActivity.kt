@@ -1,16 +1,25 @@
 package com.example.aqi
 
 import android.Manifest
+import android.app.NotificationManager
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.*
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -59,6 +68,7 @@ private fun formatTimestamp(epochSeconds: Long, today: LocalDate): String {
 
 class MainActivity : ComponentActivity() {
     private val viewModel: AqiViewModel by viewModels()
+    private val bedtimeAccessGranted = mutableStateOf(false)
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -70,6 +80,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        refreshBedtimeAccess()
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             requestPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
@@ -77,16 +88,38 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme {
-                AqiApp(viewModel)
+                AqiApp(
+                    viewModel = viewModel,
+                    bedtimeAccessGranted = bedtimeAccessGranted.value,
+                    onGrantBedtimeAccess = ::openBedtimeAccessSettings
+                )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshBedtimeAccess()
+    }
+
+    private fun refreshBedtimeAccess() {
+        bedtimeAccessGranted.value =
+            getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted
+    }
+
+    private fun openBedtimeAccessSettings() {
+        startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
     }
 }
 
 enum class Page { DETAILS, FORECAST, SETTINGS, ABOUT }
 
 @Composable
-fun AqiApp(viewModel: AqiViewModel) {
+fun AqiApp(
+    viewModel: AqiViewModel,
+    bedtimeAccessGranted: Boolean,
+    onGrantBedtimeAccess: () -> Unit
+) {
     val pages = Page.entries
     val pagerState = rememberPagerState { pages.size }
 
@@ -107,6 +140,7 @@ fun AqiApp(viewModel: AqiViewModel) {
             when (pages[pageIndex]) {
                 Page.DETAILS -> DetailsPage(
                     dataFlow = viewModel.latestData,
+                    isRefreshingFlow = viewModel.isRefreshing,
                     onRefresh = { viewModel.forceRefresh() }
                 )
                 Page.FORECAST -> ForecastPage(
@@ -115,7 +149,9 @@ fun AqiApp(viewModel: AqiViewModel) {
                 )
                 Page.SETTINGS -> SettingsPage(
                     cacheMinutesFlow = viewModel.locationCacheMinutes,
-                    onCacheMinutesChanged = { viewModel.setLocationCacheMinutes(it) }
+                    onCacheMinutesChanged = { viewModel.setLocationCacheMinutes(it) },
+                    bedtimeAccessGranted = bedtimeAccessGranted,
+                    onGrantBedtimeAccess = onGrantBedtimeAccess
                 )
                 Page.ABOUT -> AboutPage()
             }
@@ -126,10 +162,19 @@ fun AqiApp(viewModel: AqiViewModel) {
 @Composable
 fun DetailsPage(
     dataFlow: Flow<SensorData?>,
+    isRefreshingFlow: Flow<Boolean>,
     onRefresh: () -> Unit
 ) {
     val data by dataFlow.collectAsState(initial = null)
+    val isRefreshing by isRefreshingFlow.collectAsState(initial = false)
     val today = remember { LocalDate.now() }
+    val refreshTransition = rememberInfiniteTransition(label = "refresh")
+    val refreshRotation by refreshTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(animation = tween(durationMillis = 850, easing = LinearEasing)),
+        label = "refreshRotation"
+    )
 
     ScalingLazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -185,7 +230,21 @@ fun DetailsPage(
                 Spacer(modifier = Modifier.height(16.dp))
                 Chip(
                     onClick = onRefresh,
-                    label = { Text("Refresh", textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
+                    enabled = !isRefreshing,
+                    icon = {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_refresh),
+                            contentDescription = null,
+                            modifier = Modifier.rotate(if (isRefreshing) refreshRotation else 0f)
+                        )
+                    },
+                    label = {
+                        Text(
+                            if (isRefreshing) "Refreshing" else "Refresh",
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    },
                     modifier = Modifier.wrapContentWidth()
                 )
             }
@@ -294,7 +353,9 @@ fun AboutPage() {
 @Composable
 fun SettingsPage(
     cacheMinutesFlow: Flow<Int>,
-    onCacheMinutesChanged: (Int) -> Unit
+    onCacheMinutesChanged: (Int) -> Unit,
+    bedtimeAccessGranted: Boolean,
+    onGrantBedtimeAccess: () -> Unit
 ) {
     val cacheMinutes by cacheMinutesFlow.collectAsState(initial = 60)
     val options = listOf(15, 30, 60, 120, 240)
@@ -308,6 +369,33 @@ fun SettingsPage(
                 Text("Location Cache", style = MaterialTheme.typography.title3)
                 Text("Max Age", style = MaterialTheme.typography.caption2)
                 Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
+
+        if (!bedtimeAccessGranted) {
+            item {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "Grant Bedtime access to pause background sync during sleep mode.",
+                        style = MaterialTheme.typography.caption2,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Chip(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        onClick = onGrantBedtimeAccess,
+                        colors = ChipDefaults.secondaryChipColors(),
+                        label = {
+                            Text(
+                                text = "Grant Bedtime Access",
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
             }
         }
 

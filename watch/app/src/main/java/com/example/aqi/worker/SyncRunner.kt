@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
 import com.example.aqi.AqiComplicationService
 import com.example.aqi.AppLog
+import com.example.aqi.bedtime.BedtimeModeHelper
 import com.example.aqi.data.AqiRepository
 import com.example.aqi.data.aqiPrefs
 import com.example.aqi.receiver.SyncAlarmScheduler
@@ -22,10 +23,18 @@ object SyncRunner {
     suspend fun runIfStale(
         context: Context,
         triggerReason: String,
-        manageRetryAlarm: Boolean = false
+        manageRetryAlarm: Boolean = false,
+        allowDuringBedtime: Boolean = false
     ): AqiRepository.SyncOutcome? {
         return syncMutex.withLock {
             val appContext = context.applicationContext
+            bedtimeSkipOutcome(
+                context = appContext,
+                triggerReason = triggerReason,
+                manageRetryAlarm = manageRetryAlarm,
+                allowDuringBedtime = allowDuringBedtime
+            )?.let { return it }
+
             val prefs = appContext.aqiPrefs
             val now = System.currentTimeMillis()
             val snapshot = prefs.readSnapshot()
@@ -66,11 +75,40 @@ object SyncRunner {
     suspend fun runNow(
         context: Context,
         triggerReason: String,
-        manageRetryAlarm: Boolean = false
+        manageRetryAlarm: Boolean = false,
+        allowDuringBedtime: Boolean = false
     ): AqiRepository.SyncOutcome {
         return syncMutex.withLock {
-            runNowLocked(context.applicationContext, triggerReason, manageRetryAlarm)
+            val appContext = context.applicationContext
+            bedtimeSkipOutcome(
+                context = appContext,
+                triggerReason = triggerReason,
+                manageRetryAlarm = manageRetryAlarm,
+                allowDuringBedtime = allowDuringBedtime
+            ) ?: runNowLocked(appContext, triggerReason, manageRetryAlarm)
         }
+    }
+
+    private fun bedtimeSkipOutcome(
+        context: Context,
+        triggerReason: String,
+        manageRetryAlarm: Boolean,
+        allowDuringBedtime: Boolean
+    ): AqiRepository.SyncOutcome? {
+        if (allowDuringBedtime || !BedtimeModeHelper.isBedtimeModeActive(context)) {
+            return null
+        }
+
+        AppLog.i("SyncRunner", "Skipping sync during bedtime. reason=$triggerReason")
+        if (manageRetryAlarm) {
+            SyncAlarmScheduler.cancelAlarm(context)
+            SyncAlarmScheduler.cancelRetryAlarm(context)
+        }
+
+        return AqiRepository.SyncOutcome(
+            shouldRetry = false,
+            didSaveData = false
+        )
     }
 
     private suspend fun runNowLocked(
@@ -105,7 +143,7 @@ object SyncRunner {
         }
 
         if (manageRetryAlarm) {
-            if (outcome.shouldRetry) {
+            if (outcome.shouldRetry && !BedtimeModeHelper.isBedtimeModeActive(context)) {
                 SyncAlarmScheduler.scheduleRetryAlarm(context)
             } else {
                 SyncAlarmScheduler.cancelRetryAlarm(context)
@@ -113,7 +151,11 @@ object SyncRunner {
         }
 
         if (outcome.shouldRetry) {
-            AppLog.w("SyncRunner", "Data still stale after fetch. Scheduling 15-minute retry.")
+            if (BedtimeModeHelper.isBedtimeModeActive(context)) {
+                AppLog.w("SyncRunner", "Data still stale after fetch, but retry suppressed during bedtime.")
+            } else {
+                AppLog.w("SyncRunner", "Data still stale after fetch. Scheduling 15-minute retry.")
+            }
         }
 
         return outcome
