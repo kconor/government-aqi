@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.aqi.AppLog
+import com.example.aqi.SyncDiagnostics
 import com.example.aqi.worker.SyncRunner
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,6 +30,12 @@ class AqiViewModel(application: Application) : AndroidViewModel(application) {
 
     fun forceRefresh() {
         if (_isRefreshing.value) {
+            SyncDiagnostics.record(
+                getApplication(),
+                category = "manual_ignored",
+                triggerReason = "manual_refresh",
+                details = "already_refreshing=true"
+            )
             return
         }
 
@@ -36,10 +43,16 @@ class AqiViewModel(application: Application) : AndroidViewModel(application) {
             _isRefreshing.value = true
             try {
                 AppLog.d("AqiViewModel", "Running forceRefresh")
+                SyncDiagnostics.record(
+                    getApplication(),
+                    category = "manual_request",
+                    triggerReason = "manual_refresh",
+                    details = "source=ui"
+                )
                 SyncRunner.runNow(
                     getApplication(),
                     "manual_refresh",
-                    manageRetryAlarm = true,
+                    manageRetryAlarm = false,
                     allowDuringBedtime = true
                 )
             } finally {

@@ -2,32 +2,27 @@ package com.example.aqi
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.os.Build
 import androidx.wear.watchface.complications.data.*
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceService
 import androidx.wear.watchface.complications.datasource.ComplicationRequest
 import com.example.aqi.data.aqiPrefs
-import com.example.aqi.worker.SyncWorkScheduler
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 
 class AqiComplicationService : ComplicationDataSourceService() {
+    companion object {
+        private const val MAX_AQI_VALUE = 500f
+        private const val GOAL_AQI_VALUE = 50f
+    }
 
     override fun getPreviewData(type: ComplicationType): ComplicationData? {
-        return createComplicationData(45, "PM2.5", type)
+        return createComplicationData(45, "AQI", type)
     }
 
     override fun onComplicationActivated(complicationInstanceId: Int, type: ComplicationType) {
         super.onComplicationActivated(complicationInstanceId, type)
-        CoroutineScope(Dispatchers.IO).launch {
-            SyncWorkScheduler.enqueueIfStale(
-                applicationContext,
-                "complication_activated:$complicationInstanceId:$type",
-                manageRetryAlarm = true
-            )
-        }
         AppLog.d(
             "AqiComplicationService",
             "Complication activated. id=$complicationInstanceId type=$type"
@@ -85,6 +80,21 @@ class AqiComplicationService : ComplicationDataSourceService() {
                     .setTapAction(tapPendingIntent)
                     .build()
             }
+            ComplicationType.GOAL_PROGRESS -> {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                    return null
+                }
+
+                GoalProgressComplicationData.Builder(
+                    0f,
+                    GOAL_AQI_VALUE,
+                    text
+                )
+                    .setText(text)
+                    .setTitle(title)
+                    .setTapAction(tapPendingIntent)
+                    .build()
+            }
             ComplicationType.RANGED_VALUE -> {
                 RangedValueComplicationData.Builder(
                     value = 0f,
@@ -121,11 +131,26 @@ class AqiComplicationService : ComplicationDataSourceService() {
                     .setTapAction(tapPendingIntent)
                     .build()
             }
+            ComplicationType.GOAL_PROGRESS -> {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                    return null
+                }
+
+                GoalProgressComplicationData.Builder(
+                    value.toFloat(),
+                    GOAL_AQI_VALUE,
+                    text
+                )
+                    .setText(text)
+                    .setTitle(title)
+                    .setTapAction(tapPendingIntent)
+                    .build()
+            }
             ComplicationType.RANGED_VALUE -> {
                 RangedValueComplicationData.Builder(
                     value = value.toFloat(),
                     min = 0f,
-                    max = 50f,
+                    max = MAX_AQI_VALUE,
                     contentDescription = text
                 )
                     .setText(text)

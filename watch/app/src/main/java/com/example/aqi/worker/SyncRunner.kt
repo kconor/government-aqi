@@ -1,10 +1,9 @@
 package com.example.aqi.worker
 
-import android.content.ComponentName
 import android.content.Context
-import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
-import com.example.aqi.AqiComplicationService
 import com.example.aqi.AppLog
+import com.example.aqi.ComplicationUpdateDispatcher
+import com.example.aqi.SyncDiagnostics
 import com.example.aqi.bedtime.BedtimeModeHelper
 import com.example.aqi.data.AqiRepository
 import com.example.aqi.data.aqiPrefs
@@ -15,8 +14,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 object SyncRunner {
-    private const val MIN_SYNC_INTERVAL_MS = 15 * 60 * 1000L
-    const val STALE_DATA_THRESHOLD_MS = 90 * 60 * 1000L
+    const val SCHEDULED_SYNC_THRESHOLD_MS = 60 * 60 * 1000L
 
     private val syncMutex = Mutex()
 
@@ -24,7 +22,8 @@ object SyncRunner {
         context: Context,
         triggerReason: String,
         manageRetryAlarm: Boolean = false,
-        allowDuringBedtime: Boolean = false
+        allowDuringBedtime: Boolean = false,
+        freshnessThresholdMs: Long = SCHEDULED_SYNC_THRESHOLD_MS
     ): AqiRepository.SyncOutcome? {
         return syncMutex.withLock {
             val appContext = context.applicationContext
@@ -38,26 +37,20 @@ object SyncRunner {
             val prefs = appContext.aqiPrefs
             val now = System.currentTimeMillis()
             val snapshot = prefs.readSnapshot()
-            val lastAttemptAgeMs = now - snapshot.lastSyncAttempt
-            if (lastAttemptAgeMs < MIN_SYNC_INTERVAL_MS) {
-                AppLog.d(
-                    "SyncRunner",
-                    "runIfStale skipped: last attempt ${lastAttemptAgeMs / 1000}s ago (<15 min). reason=$triggerReason"
-                )
-                return null
-            }
-
             val sensorData = snapshot.latestSensorData
             if (sensorData != null) {
                 val dataAgeMs = now - (sensorData.timestamp * 1000)
-                if (dataAgeMs < STALE_DATA_THRESHOLD_MS) {
+                if (dataAgeMs < freshnessThresholdMs) {
                     AppLog.d(
                         "SyncRunner",
-                        "runIfStale skipped: data only ${dataAgeMs / 60_000}min old (<90 min). reason=$triggerReason"
+                        "runIfStale skipped: data only ${dataAgeMs / 60_000}min old (<${freshnessThresholdMs / 60_000} min). reason=$triggerReason"
                     )
-                    if (manageRetryAlarm) {
-                        SyncAlarmScheduler.cancelRetryAlarm(appContext)
-                    }
+                    SyncDiagnostics.record(
+                        appContext,
+                        category = "sync_skipped",
+                        triggerReason = triggerReason,
+                        details = "kind=data_fresh dataAgeMin=${dataAgeMs / 60_000} thresholdMin=${freshnessThresholdMs / 60_000}"
+                    )
                     return null
                 }
             }
@@ -65,7 +58,7 @@ object SyncRunner {
             val dataAgeMin = if (sensorData != null) (now - sensorData.timestamp * 1000) / 60_000 else -1
             AppLog.d(
                 "SyncRunner",
-                "runIfStale: data is ${dataAgeMin}min old (threshold=${STALE_DATA_THRESHOLD_MS / 60_000}min). Triggering sync. reason=$triggerReason"
+                "runIfStale: data is ${dataAgeMin}min old (threshold=${freshnessThresholdMs / 60_000}min). Triggering sync. reason=$triggerReason"
             )
 
             return runNowLocked(appContext, triggerReason, manageRetryAlarm)
@@ -100,6 +93,12 @@ object SyncRunner {
         }
 
         AppLog.i("SyncRunner", "Skipping sync during bedtime. reason=$triggerReason")
+        SyncDiagnostics.record(
+            context,
+            category = "sync_skipped",
+            triggerReason = triggerReason,
+            details = "kind=bedtime manageRetryAlarm=$manageRetryAlarm"
+        )
         if (manageRetryAlarm) {
             SyncAlarmScheduler.cancelAlarm(context)
             SyncAlarmScheduler.cancelRetryAlarm(context)
@@ -117,6 +116,12 @@ object SyncRunner {
         manageRetryAlarm: Boolean
     ): AqiRepository.SyncOutcome {
         AppLog.d("SyncRunner", "Starting sync. reason=$triggerReason")
+        SyncDiagnostics.record(
+            context,
+            category = "sync_started",
+            triggerReason = triggerReason,
+            details = "manageRetryAlarm=$manageRetryAlarm"
+        )
 
         val repo = AqiRepository(context)
         val startMs = System.currentTimeMillis()
@@ -125,6 +130,12 @@ object SyncRunner {
         AppLog.d(
             "SyncRunner",
             "syncData(retry=${outcome.shouldRetry}, saved=${outcome.didSaveData}) in ${elapsedMs}ms reason=$triggerReason"
+        )
+        SyncDiagnostics.record(
+            context,
+            category = "sync_finished",
+            triggerReason = triggerReason,
+            details = "retry=${outcome.shouldRetry} saved=${outcome.didSaveData} elapsedMs=$elapsedMs"
         )
 
         context.aqiPrefs.setLastSyncAttempt(System.currentTimeMillis())
@@ -135,18 +146,7 @@ object SyncRunner {
                     launch { repo.syncForecast() }
                 }
 
-                val componentName = ComponentName(context, AqiComplicationService::class.java)
-                val updateRequester = ComplicationDataSourceUpdateRequester.create(context, componentName)
-                updateRequester.requestUpdateAll()
-                AppLog.d("SyncRunner", "requestUpdateAll() called")
-            }
-        }
-
-        if (manageRetryAlarm) {
-            if (outcome.shouldRetry && !BedtimeModeHelper.isBedtimeModeActive(context)) {
-                SyncAlarmScheduler.scheduleRetryAlarm(context)
-            } else {
-                SyncAlarmScheduler.cancelRetryAlarm(context)
+                ComplicationUpdateDispatcher.requestAll(context, triggerReason)
             }
         }
 

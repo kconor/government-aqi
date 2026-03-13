@@ -34,6 +34,7 @@ import androidx.wear.compose.material.*
 import com.example.aqi.data.AqiViewModel
 import com.example.aqi.data.ForecastDay
 import com.example.aqi.data.SensorData
+import com.example.aqi.receiver.SyncAlarmScheduler
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.time.Instant
@@ -69,6 +70,8 @@ private fun formatTimestamp(epochSeconds: Long, today: LocalDate): String {
 class MainActivity : ComponentActivity() {
     private val viewModel: AqiViewModel by viewModels()
     private val bedtimeAccessGranted = mutableStateOf(false)
+    private val exactAlarmAccessGranted = mutableStateOf(true)
+    private var exactAlarmPermissionPrompted = false
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -80,7 +83,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        SyncDiagnostics.dumpRecent(this, "MainActivity.onCreate")
         refreshBedtimeAccess()
+        refreshExactAlarmAccess()
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             requestPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION))
@@ -91,15 +96,30 @@ class MainActivity : ComponentActivity() {
                 AqiApp(
                     viewModel = viewModel,
                     bedtimeAccessGranted = bedtimeAccessGranted.value,
-                    onGrantBedtimeAccess = ::openBedtimeAccessSettings
+                    exactAlarmAccessGranted = exactAlarmAccessGranted.value,
+                    onGrantBedtimeAccess = ::openBedtimeAccessSettings,
+                    onGrantExactAlarmAccess = ::openExactAlarmAccessSettings
                 )
             }
         }
+
+        maybePromptForExactAlarmAccess()
     }
 
     override fun onResume() {
         super.onResume()
+        val wasExactAlarmAccessGranted = exactAlarmAccessGranted.value
         refreshBedtimeAccess()
+        refreshExactAlarmAccess()
+        if (!wasExactAlarmAccessGranted && exactAlarmAccessGranted.value) {
+            SyncDiagnostics.record(
+                this,
+                category = "exact_alarm_permission",
+                triggerReason = "main_activity",
+                details = "action=granted"
+            )
+            (application as AqiApplication).refreshBackgroundSyncState("exact_alarm_permission_granted")
+        }
     }
 
     private fun refreshBedtimeAccess() {
@@ -107,8 +127,31 @@ class MainActivity : ComponentActivity() {
             getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted
     }
 
+    private fun refreshExactAlarmAccess() {
+        exactAlarmAccessGranted.value = SyncAlarmScheduler.canScheduleExactAlarms(this)
+    }
+
     private fun openBedtimeAccessSettings() {
         startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+    }
+
+    private fun openExactAlarmAccessSettings() {
+        val intent = SyncAlarmScheduler.createExactAlarmPermissionIntent(this) ?: return
+        exactAlarmPermissionPrompted = true
+        SyncDiagnostics.record(
+            this,
+            category = "exact_alarm_permission",
+            triggerReason = "main_activity",
+            details = "action=request_settings"
+        )
+        startActivity(intent)
+    }
+
+    private fun maybePromptForExactAlarmAccess() {
+        if (exactAlarmAccessGranted.value || exactAlarmPermissionPrompted) {
+            return
+        }
+        openExactAlarmAccessSettings()
     }
 }
 
@@ -118,7 +161,9 @@ enum class Page { DETAILS, FORECAST, SETTINGS, ABOUT }
 fun AqiApp(
     viewModel: AqiViewModel,
     bedtimeAccessGranted: Boolean,
-    onGrantBedtimeAccess: () -> Unit
+    exactAlarmAccessGranted: Boolean,
+    onGrantBedtimeAccess: () -> Unit,
+    onGrantExactAlarmAccess: () -> Unit
 ) {
     val pages = Page.entries
     val pagerState = rememberPagerState { pages.size }
@@ -151,7 +196,9 @@ fun AqiApp(
                     cacheMinutesFlow = viewModel.locationCacheMinutes,
                     onCacheMinutesChanged = { viewModel.setLocationCacheMinutes(it) },
                     bedtimeAccessGranted = bedtimeAccessGranted,
-                    onGrantBedtimeAccess = onGrantBedtimeAccess
+                    exactAlarmAccessGranted = exactAlarmAccessGranted,
+                    onGrantBedtimeAccess = onGrantBedtimeAccess,
+                    onGrantExactAlarmAccess = onGrantExactAlarmAccess
                 )
                 Page.ABOUT -> AboutPage()
             }
@@ -355,7 +402,9 @@ fun SettingsPage(
     cacheMinutesFlow: Flow<Int>,
     onCacheMinutesChanged: (Int) -> Unit,
     bedtimeAccessGranted: Boolean,
-    onGrantBedtimeAccess: () -> Unit
+    exactAlarmAccessGranted: Boolean,
+    onGrantBedtimeAccess: () -> Unit,
+    onGrantExactAlarmAccess: () -> Unit
 ) {
     val cacheMinutes by cacheMinutesFlow.collectAsState(initial = 60)
     val options = listOf(15, 30, 60, 120, 240)
@@ -389,6 +438,33 @@ fun SettingsPage(
                         label = {
                             Text(
                                 text = "Grant Bedtime Access",
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
+        }
+
+        if (!exactAlarmAccessGranted) {
+            item {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "Grant Exact Alarm access so hourly and retry sync alarms can fire on time.",
+                        style = MaterialTheme.typography.caption2,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Chip(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        onClick = onGrantExactAlarmAccess,
+                        colors = ChipDefaults.secondaryChipColors(),
+                        label = {
+                            Text(
+                                text = "Grant Exact Alarm Access",
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.fillMaxWidth()
                             )

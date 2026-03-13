@@ -18,8 +18,8 @@ class AqiRepository(private val context: Context) {
     companion object {
         /** If the device is within this distance of the cached sensor, skip nearest-sensor recomputation. */
         private const val SENSOR_REUSE_THRESHOLD_KM = 8.0 // ~5 miles
-        /** Previous-hour data should have advanced by the time the watch runs its :30-ish sync. */
-        private const val RETRY_STALE_DATA_THRESHOLD_MS = 90 * 60 * 1000L
+        /** Scheduled syncs treat data older than one hour as stale and worth retrying. */
+        private const val RETRY_STALE_DATA_THRESHOLD_MS = 60 * 60 * 1000L
     }
 
     data class SyncOutcome(

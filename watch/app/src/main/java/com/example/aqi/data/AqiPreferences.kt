@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.aqi.AqiApplication
+import com.example.aqi.AppLog
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CompletableDeferred
@@ -140,6 +141,11 @@ class AqiPreferences(private val context: Context) {
                 complicationSnapshot = complicationSnapshot
             )
         }
+        AppLog.d(
+            "AqiPreferences",
+            "Saved sensor=${data.name} ts=${data.timestamp} primaryAqi=${data.primaryAqi} " +
+                "complication=${complicationSnapshot?.value}/${complicationSnapshot?.metric}"
+        )
     }
 
     suspend fun getLastSyncAttempt(): Long {
@@ -194,8 +200,12 @@ class AqiPreferences(private val context: Context) {
         val latestSensorData = this[LATEST_SENSOR_DATA_KEY]?.let {
             gson.fromJson(it, SensorData::class.java)
         }
-        val complicationSnapshot = complicationSnapshotFromPrefs(this)
-            ?: latestSensorData?.toComplicationSnapshot()
+        val storedComplicationSnapshot = complicationSnapshotFromPrefs(this)
+        val currentComplicationSnapshot = latestSensorData?.toComplicationSnapshot()
+        val complicationSnapshot = reconcileComplicationSnapshot(
+            storedSnapshot = storedComplicationSnapshot,
+            currentSnapshot = currentComplicationSnapshot
+        )
 
         return Snapshot(
             latestSensorData = latestSensorData,
@@ -208,6 +218,25 @@ class AqiPreferences(private val context: Context) {
             },
             lastForecastSync = this[LAST_FORECAST_SYNC_KEY] ?: 0L
         )
+    }
+
+    private fun reconcileComplicationSnapshot(
+        storedSnapshot: ComplicationSnapshot?,
+        currentSnapshot: ComplicationSnapshot?
+    ): ComplicationSnapshot? {
+        if (storedSnapshot == null) return currentSnapshot
+        if (currentSnapshot == null) return storedSnapshot
+
+        return if (
+            storedSnapshot.value != currentSnapshot.value ||
+            storedSnapshot.metric != currentSnapshot.metric ||
+            storedSnapshot.sensorName != currentSnapshot.sensorName ||
+            storedSnapshot.timestamp != currentSnapshot.timestamp
+        ) {
+            currentSnapshot
+        } else {
+            storedSnapshot
+        }
     }
 
     private fun complicationSnapshotFromPrefs(prefs: Preferences): ComplicationSnapshot? {
@@ -253,6 +282,16 @@ class AqiPreferences(private val context: Context) {
     }
 
     private fun SensorData.toComplicationSnapshot(): ComplicationSnapshot? {
+        val primaryValue = primaryAqi
+        if (primaryValue != null) {
+            return ComplicationSnapshot(
+                value = primaryValue,
+                metric = "AQI",
+                sensorName = name,
+                timestamp = timestamp
+            )
+        }
+
         val worstMetric = metrics.maxByOrNull { it.value } ?: return null
         return ComplicationSnapshot(
             value = worstMetric.value,
